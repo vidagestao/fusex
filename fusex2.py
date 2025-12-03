@@ -7,6 +7,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from num2words import num2words
 import os
 from datetime import datetime
+import pytz # Fuso horário
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
@@ -356,16 +357,12 @@ def sistema_principal():
         footer = section.footer
         p_footer = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
         
-        # Define o fuso horário de Brasília
         fuso_br = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso_br).strftime("%d/%m/%Y às %H:%M")
         
         p_footer.text = f"Gestão Corpore - Documento gerado em: {agora}"
         p_footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        
-        # Garante o tamanho da fonte (cria o run se não existir)
-        if not p_footer.runs:
-            p_footer.add_run()
+        if not p_footer.runs: p_footer.add_run()
         p_footer.runs[0].font.size = Pt(8)
 
         return doc
@@ -420,8 +417,22 @@ def sistema_principal():
         st.header("📝 Nova Fatura")
         if 'df_input' not in st.session_state: st.session_state['df_input'] = pd.DataFrame(columns=["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"])
         c1, c2, c3 = st.columns(3)
-        mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1); seq = c1.number_input("Sequencial", 1, 100, 1); fatura_ref = f"{meses[mes_nome]}.{seq}"; c1.info(f"Fatura: **{fatura_ref}**")
-        ano = c2.number_input("Ano", 2024, 2030, 2025); servico = c2.multiselect("Serviço", ["Fisioterapia", "Fonoaudiologia", "Consulta"], default=["Fisioterapia"]); servico_txt = ", ".join(servico); usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
+        
+        mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1)
+        seq = c1.number_input("Sequencial", 1, 100, 1)
+        
+        # Criação da Fatura Ref fiel à seleção
+        fatura_ref = f"{meses[mes_nome]}.{seq}"
+        c1.info(f"Fatura: **{fatura_ref}**")
+        
+        ano = c2.number_input("Ano", 2024, 2030, 2025)
+        
+        # NOVA LISTA COMPLETA DE ESPECIALIDADES
+        lista_servicos = ["Consulta", "Fisioterapia", "Fonoaudiologia", "Psicologia", "Terapia Ocupacional", "Terapias Especiais TEA/TGD"]
+        servico = c2.multiselect("Serviço", lista_servicos, default=["Fisioterapia"])
+        servico_txt = ", ".join(servico)
+        
+        usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
         
         uploaded = st.file_uploader("Arraste os PDFs", type="pdf", accept_multiple_files=True)
         if uploaded and st.button("Processar PDFs"):
@@ -510,4 +521,3 @@ if __name__ == "__main__":
         sistema_principal()
     else:
         tela_login()
-
