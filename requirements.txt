@@ -9,3 +9,4 @@ easyocr
 numpy
 Pillow
 bcrypt
+pytz
