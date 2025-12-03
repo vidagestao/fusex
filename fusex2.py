@@ -266,12 +266,17 @@ def gerar_pdf_protocolo(faturas, qtd_guias, total):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     c.drawString(3*cm, 27*cm, "PROTOCOLO DE REMESSA - CORPORE")
-    c.drawString(3*cm, 26*cm, f"Faturas: {', '.join(faturas)}")
+    
+    # --- CORREÇÃO: Garante que tudo vire texto antes de juntar ---
+    # Se 'faturas' tiver números (ex: 2.1), o .join falha. O str(f) resolve.
+    lista_faturas_str = ", ".join([str(f) for f in faturas])
+    
+    c.drawString(3*cm, 26*cm, f"Faturas: {lista_faturas_str}")
     c.drawString(3*cm, 25.5*cm, f"Total Guias: {qtd_guias} | Valor Total: R$ {total:,.2f}")
     c.save()
     buffer.seek(0)
     return buffer
-
+    
 # --- INTERFACE PRINCIPAL ---
 tab1, tab2, tab3, tab4 = st.tabs(["📝 Nova Fatura", "✏ Editar (Nuvem)", "📈 Relatórios", "📦 Protocolo"])
 meses = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6, "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
@@ -409,3 +414,4 @@ with tab4:
             if st.button("🖨 Baixar PDF Protocolo"):
                 pdf = gerar_pdf_protocolo(sel, qtd, tot)
                 st.download_button("📥 Download PDF", pdf, "Protocolo.pdf", "application/pdf")
+
