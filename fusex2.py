@@ -262,17 +262,93 @@ def criar_template_padrao():
     p_ext.add_run('{{EXTENSO}} ({{TOTAL}})')
     return doc
 
-def gerar_pdf_protocolo(faturas, qtd_guias, total):
+def gerar_pdf_protocolo(faturas_selecionadas, qtd_guias, total_faturas):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    c.drawString(3*cm, 27*cm, "PROTOCOLO DE REMESSA - CORPORE")
+    data_envio = datetime.now().strftime("%d/%m/%Y às %H:%M")
     
-    # --- CORREÇÃO: Garante que tudo vire texto antes de juntar ---
-    # Se 'faturas' tiver números (ex: 2.1), o .join falha. O str(f) resolve.
-    lista_faturas_str = ", ".join([str(f) for f in faturas])
+    endereco_fusex = [
+        "Aos Cuidados FUSEX", 
+        "Hospital Geral de Juiz de Fora - HGeJF", 
+        "Endereço: R. Gen. Deschamps Cavalcante, s/n - Fábrica", 
+        "Juiz de Fora - MG, 36080-220"
+    ]
     
-    c.drawString(3*cm, 26*cm, f"Faturas: {lista_faturas_str}")
-    c.drawString(3*cm, 25.5*cm, f"Total Guias: {qtd_guias} | Valor Total: R$ {total:,.2f}")
+    def desenhar_via(y_inicial):
+        # --- Cabeçalho ---
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(2*cm, y_inicial, "CORPORE CENTRO DE SAÚDE LTDA")
+        
+        c.setFont("Helvetica", 10)
+        c.drawString(2*cm, y_inicial - 0.5*cm, "PROTOCOLO DE REMESSA DE FATURAS FUSEX")
+        
+        # --- Bloco de Endereço (Alinhado à Direita) ---
+        c.setFont("Helvetica", 9)
+        y_dest = y_inicial
+        for linha in endereco_fusex: 
+            c.drawRightString(19*cm, y_dest, linha)
+            y_dest -= 0.4*cm  # Espaçamento um pouco menor para ficar compacto
+            
+        # --- Caixa de Resumo ---
+        y_box = y_inicial - 2.8*cm
+        c.rect(2*cm, y_box - 2.5*cm, 17*cm, 2.5*cm) # Retângulo
+        
+        c.setFont("Helvetica-Bold", 11)
+        # Ajustei para str() para garantir que não dê erro se vier número
+        c.drawString(2.5*cm, y_box - 0.8*cm, f"QTD FATURAS: {len(faturas_selecionadas)}")
+        c.drawString(10*cm, y_box - 0.8*cm, f"TOTAL DE GUIAS: {qtd_guias}")
+        
+        # --- Tratamento das Strings de Faturas ---
+        # 1. Garante que tudo é texto
+        lista_faturas_str = [str(f) for f in faturas_selecionadas]
+        texto_faturas = ", ".join(lista_faturas_str)
+        
+        # 2. Corta se for muito grande e adiciona ...
+        if len(texto_faturas) > 90:
+            texto_faturas = texto_faturas[:90] + "..."
+            
+        c.setFont("Helvetica", 10)
+        c.drawString(2.5*cm, y_box - 1.5*cm, f"Ref. Faturas: {texto_faturas}")
+        
+        # Formatação de Moeda Manual (Funciona bem em qualquer servidor)
+        valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        c.drawString(2.5*cm, y_box - 2.2*cm, f"Valor Total Declarado: R$ {valor_fmt}")
+        
+        # --- Assinaturas ---
+        y_ass = y_box - 4.5*cm
+        
+        # Assinatura Corpore
+        c.line(2*cm, y_ass, 9*cm, y_ass)
+        c.setFont("Helvetica", 8)
+        c.drawString(2*cm, y_ass - 0.4*cm, "Despachado por (Corpore)")
+        
+        # Assinatura Motoboy
+        c.line(11*cm, y_ass, 19*cm, y_ass)
+        c.drawString(11*cm, y_ass - 0.4*cm, "Transportado por (Motoboy)")
+        
+        # Assinatura HGeJF
+        y_ass2 = y_ass - 2.5*cm
+        c.line(2*cm, y_ass2, 19*cm, y_ass2)
+        c.setFont("Helvetica-Bold", 9) # Destaque para quem recebe
+        c.drawString(2*cm, y_ass2 - 0.5*cm, "Recebido por (Carimbo/Assinatura HGeJF)")
+        
+        # --- Rodapé da Via ---
+        c.setFont("Helvetica-Oblique", 7)
+        c.drawRightString(19*cm, y_ass2 - 1.2*cm, f"Gerado via Sistema Corpore em: {data_envio}")
+        
+    # --- Desenha a 1ª Via (Superior) ---
+    desenhar_via(27*cm)
+    
+    # --- Linha de Corte (Tracejada) ---
+    c.setDash(4, 4)
+    c.line(1*cm, 14.85*cm, 20*cm, 14.85*cm) # Meio exato da folha A4
+    c.setFont("Helvetica", 6)
+    c.drawCentredString(10.5*cm, 14.95*cm, "- - - Corte Aqui - - -")
+    c.setDash([]) # Reseta o tracejado
+    
+    # --- Desenha a 2ª Via (Inferior) ---
+    desenhar_via(13*cm)
+    
     c.save()
     buffer.seek(0)
     return buffer
@@ -414,4 +490,5 @@ with tab4:
             if st.button("🖨 Baixar PDF Protocolo"):
                 pdf = gerar_pdf_protocolo(sel, qtd, tot)
                 st.download_button("📥 Download PDF", pdf, "Protocolo.pdf", "application/pdf")
+
 
