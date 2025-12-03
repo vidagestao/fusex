@@ -48,7 +48,6 @@ def salvar_novo_usuario(username, name, password):
         return False, "Usuário já existe!"
     
     # Criptografia (Hash)
-    # O encode converte string para bytes, o salt garante unicidade
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     novo_usuario = pd.DataFrame([{
@@ -83,7 +82,6 @@ def autenticar_usuario(username, password):
     stored_hash = user_row.iloc[0]['password_hash']
     
     # Verifica a senha
-    # checkpw compara a senha digitada (em bytes) com o hash salvo (em bytes)
     if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
         return True, user_row.iloc[0]['name']
     else:
@@ -148,7 +146,7 @@ def logout():
     st.rerun()
 
 # ==========================================
-# 🏥 MÓDULO PRINCIPAL (SEU SISTEMA)
+# 🏥 MÓDULO PRINCIPAL (SISTEMA DE FATURAS)
 # ==========================================
 
 def sistema_principal():
@@ -161,41 +159,67 @@ def sistema_principal():
 
     st.title("🏥 Gestão de Faturas e Guias")
 
-    # --- FUNÇÕES DE DADOS (Mantidas do seu código anterior) ---
+    # --- FUNÇÕES DE BANCO DE DADOS (SHEETS) ---
     def carregar_dados_sheets():
         try:
             return conn.read(worksheet="guias", ttl=5)
         except:
-            return pd.DataFrame(columns=["fatura_ref", "mes_competencia", "ano_competencia", "tipo_usuario", "servicos_fatura", "paciente_nome", "nr_guia", "data_atend", "cod_proced", "valor", "data_lancamento"])
+            return pd.DataFrame(columns=["fatura_ref", "mes_competencia", "ano_competencia", "tipo_usuario", "servicos_fatura", "paciente_nome", "nr_guia", "prec_cp", "data_atend", "cod_proced", "valor", "data_lancamento"])
 
     def salvar_no_sheets(df_novo, meta_dados):
-        # Tenta ler, se falhar cria vazio
-        try: df_existente = conn.read(worksheet="guias", ttl=5)
-        except: df_existente = pd.DataFrame()
+        # Tenta ler a aba existente, se falhar cria um DataFrame vazio
+        try: 
+            df_existente = conn.read(worksheet="guias", ttl=5)
+        except: 
+            df_existente = pd.DataFrame()
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
+        
         for _, row in df_novo.iterrows():
-            try: val = row['VALOR_CALC']
-            except: val = 0.0
+            # Tratamento de valor para garantir float
+            try: 
+                val = row['VALOR_CALC']
+            except: 
+                val = 0.0
             
+            # Tratamento seguro para o PREC-CP (pega vazio se não existir)
+            prec_valor = row.get('PREC-CP/SIAPE', '')
+            if pd.isna(prec_valor): prec_valor = ""
+
             lista_novos.append({
-                "fatura_ref": meta_dados['fatura'], "mes_competencia": meta_dados['mes'],
-                "ano_competencia": meta_dados['ano'], "tipo_usuario": meta_dados['usuario'],
-                "servicos_fatura": meta_dados['servico'], "paciente_nome": row['NOME DO PACIENTE'],
-                "nr_guia": row['NR DA GUIA'], "data_atend": row['DATA ATEND.'],
-                "cod_proced": row['CÓDIGO PROCED.'], "valor": val,
+                "fatura_ref": meta_dados['fatura'],          # Garante o número correto da fatura
+                "mes_competencia": meta_dados['mes'],        # Garante o mês selecionado no menu
+                "ano_competencia": meta_dados['ano'],        # Garante o ano selecionado no menu
+                "tipo_usuario": meta_dados['usuario'],
+                "servicos_fatura": meta_dados['servico'],
+                "paciente_nome": row['NOME DO PACIENTE'],
+                "nr_guia": row['NR DA GUIA'],
+                "prec_cp": str(prec_valor),                  # Campo novo salvo corretamente
+                "data_atend": row['DATA ATEND.'],
+                "cod_proced": row['CÓDIGO PROCED.'],
+                "valor": val,
                 "data_lancamento": data_hoje
             })
         
         df_append = pd.DataFrame(lista_novos)
-        df_final = pd.concat([df_existente, df_append], ignore_index=True) if not df_existente.empty else df_append
         
-        try: conn.update(worksheet="guias", data=df_final)
-        except: conn.update(worksheet=0, data=df_final)
+        # Concatena com o histórico
+        if not df_existente.empty:
+            df_final = pd.concat([df_existente, df_append], ignore_index=True)
+        else:
+            df_final = df_append
+        
+        # Salva no Google Sheets
+        try: 
+            conn.update(worksheet="guias", data=df_final)
+        except: 
+            # Se a aba 'guias' não existir, tenta escrever na primeira aba disponível (fallback)
+            conn.update(worksheet=0, data=df_final)
 
     def atualizar_fatura_sheets(fatura_ref, df_editado, meta_dados):
         df_completo = carregar_dados_sheets()
+        # Remove a fatura antiga
         df_limpo = df_completo[df_completo['fatura_ref'] != fatura_ref]
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -206,19 +230,31 @@ def sistema_principal():
                 val = float(raw_val.replace('R$', '').replace('.', '').replace(',', '.'))
             except: val = 0.0
             
+            # Tenta pegar PREC-CP da edição ou do histórico, se disponível
+            prec_cp_val = row.get('PREC-CP/SIAPE', '')
+            if not prec_cp_val and 'prec_cp' in row:
+                 prec_cp_val = row['prec_cp']
+
             lista_novos.append({
-                "fatura_ref": fatura_ref, "mes_competencia": meta_dados['mes'],
-                "ano_competencia": meta_dados['ano'], "tipo_usuario": meta_dados['usuario'],
-                "servicos_fatura": meta_dados['servico'], "paciente_nome": row['NOME DO PACIENTE'],
-                "nr_guia": row['NR DA GUIA'], "data_atend": row['DATA ATEND.'],
-                "cod_proced": row['CÓDIGO PROCED.'], "valor": val, "data_lancamento": data_hoje
+                "fatura_ref": fatura_ref, 
+                "mes_competencia": meta_dados['mes'],
+                "ano_competencia": meta_dados['ano'], 
+                "tipo_usuario": meta_dados['usuario'],
+                "servicos_fatura": meta_dados['servico'], 
+                "paciente_nome": row['NOME DO PACIENTE'],
+                "nr_guia": row['NR DA GUIA'], 
+                "prec_cp": str(prec_cp_val),
+                "data_atend": row['DATA ATEND.'],
+                "cod_proced": row['CÓDIGO PROCED.'], 
+                "valor": val, 
+                "data_lancamento": data_hoje
             })
             
         df_append = pd.DataFrame(lista_novos)
         df_final = pd.concat([df_limpo, df_append], ignore_index=True)
         conn.update(worksheet="guias", data=df_final)
 
-    # --- OCR E EXTRAÇÃO ---
+    # --- OCR E EXTRAÇÃO DE PDF ---
     @st.cache_resource
     def load_ocr_reader():
         return easyocr.Reader(['pt'], gpu=False, quantize=True)
@@ -251,24 +287,31 @@ def sistema_principal():
         try:
             arquivo.seek(0)
             text, _ = extrair_texto_hibrido(arquivo)
+            
+            # Regex otimizado para GUIA 12 2025
             match_guia = re.search(r'(?:Nr|Numero)[:\.]?\s*(\d+)', text, flags=re.IGNORECASE)
             if match_guia: dados["NR DA GUIA"] = match_guia.group(1)
+            
             match_data = re.search(r'Data:\s*(\d{2}/\d{2}/\d{4})', text, flags=re.IGNORECASE)
             if match_data: dados["DATA ATEND."] = match_data.group(1)
+            
             match_titular = re.search(r'Titular:\s*\(.*?\)\s*\n?(.+)', text, flags=re.IGNORECASE)
             match_dependente = re.search(r'Dependente:\s*\(.*?\)\s*\n?(.+)', text, flags=re.IGNORECASE)
             if match_dependente: dados["NOME DO PACIENTE"] = match_dependente.group(1).strip()
             elif match_titular: dados["NOME DO PACIENTE"] = match_titular.group(1).strip()
             if "UG Origem" in dados["NOME DO PACIENTE"]: dados["NOME DO PACIENTE"] = dados["NOME DO PACIENTE"].split("UG Origem")[0].strip()
+            
             match_idt = re.search(r'Idt:\s*([\d-]+)', text, flags=re.IGNORECASE)
             if match_idt: dados["PREC-CP/SIAPE"] = match_idt.group(1)
             else:
                 match_prec = re.search(r'Prec CP:\s*(\d+)', text, flags=re.IGNORECASE)
                 if match_prec: dados["PREC-CP/SIAPE"] = match_prec.group(1)
+            
             codigos = re.findall(r'(?<!\d)(\d{8})(?!\d)', text)
             if codigos:
                 codigos_validos = [c for c in codigos if not c.startswith("202")]
                 dados["CÓDIGO PROCED."] = ", ".join(sorted(set(codigos_validos)))
+            
             match_total = re.search(r'Total\s*:?\s*([\d\.,]+)', text, flags=re.IGNORECASE)
             if match_total:
                  try: dados["VALOR (R$)"] = float(match_total.group(1).replace('.', '').replace(',', '.'))
@@ -276,8 +319,9 @@ def sistema_principal():
         except: pass
         return dados
 
-    # --- TEMPLATES WORD E PDF (Mantidos mas resumidos visualmente) ---
+    # --- WORD E PDF (GERAÇÃO DE DOCUMENTOS) ---
     def gerar_doc_word(doc, df_dados, tags, tipo_usuario):
+        # 1. Substituição de Tags
         for p in doc.paragraphs:
             for key, val in tags.items(): 
                 if key in p.text: p.text = p.text.replace(key, str(val))
@@ -286,13 +330,18 @@ def sistema_principal():
                 texto_base = "REFERENTE A USUÁRIO:   "
                 for op in opcoes: 
                     marcador = "( X )" if tipo_usuario == op else "( )"
+                    # Ajustes de compatibilidade de nomes
+                    if tipo_usuario == "PASS" and op == "PASS (S.CIVIL)": marcador = "( X )"
+                    if tipo_usuario == "S.CIVIL" and op == "PASS (S.CIVIL)": marcador = "( X )"
                     texto_base += f"{op} {marcador}    "
                 p.text = texto_base
+        
+        # 2. Tabela
         if doc.tables:
             tabela = doc.tables[0]
             for _, row in df_dados.iterrows():
                 cells = tabela.add_row().cells
-                vals = [row["NOME DO PACIENTE"], row["NR DA GUIA"], row["DATA ATEND."], row.get("PREC-CP/SIAPE", ""), row["CÓDIGO PROCED."], row["VALOR (R$)"]]
+                vals = [row.get("NOME DO PACIENTE", ""), row.get("NR DA GUIA", ""), row.get("DATA ATEND.", ""), row.get("PREC-CP/SIAPE", ""), row.get("CÓDIGO PROCED.", ""), row.get("VALOR (R$)", "0,00")]
                 for i, v in enumerate(vals): 
                     if i==5: 
                         try: cells[i].text = f"{float(str(v).replace('R$','').replace(',','.')):,.2f}".replace('.',',')
@@ -301,6 +350,16 @@ def sistema_principal():
                     if cells[i].paragraphs: cells[i].paragraphs[0].runs[0].font.size = Pt(9)
             row_total = tabela.add_row().cells
             row_total[4].text = "TOTAL"; row_total[5].text = tags["{{TOTAL}}"]
+
+        # 3. Rodapé com Data e Hora (NOVO)
+        section = doc.sections[0]
+        footer = section.footer
+        p_footer = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
+        p_footer.text = f"Gestão Corpore - Documento gerado em: {agora}"
+        p_footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        if p_footer.runs: p_footer.runs[0].font.size = Pt(8)
+
         return doc
 
     def criar_template_padrao():
@@ -321,6 +380,7 @@ def sistema_principal():
         buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=A4)
         data_envio = datetime.now().strftime("%d/%m/%Y às %H:%M")
         endereco_fusex = ["Aos Cuidados FUSEX", "Hospital Geral de Juiz de Fora - HGeJF", "Endereço: R. Gen. Deschamps Cavalcante, s/n - Fábrica", "Juiz de Fora - MG, 36080-220"]
+        
         def desenhar_via(y_inicial):
             c.setFont("Helvetica-Bold", 14); c.drawString(2*cm, y_inicial, "CORPORE CENTRO DE SAÚDE LTDA")
             c.setFont("Helvetica", 10); c.drawString(2*cm, y_inicial - 0.5*cm, "PROTOCOLO DE REMESSA DE FATURAS FUSEX")
@@ -328,27 +388,33 @@ def sistema_principal():
             for linha in endereco_fusex: c.drawRightString(19*cm, y_dest, linha); y_dest -= 0.4*cm
             y_box = y_inicial - 2.8*cm; c.rect(2*cm, y_box - 2.5*cm, 17*cm, 2.5*cm)
             c.setFont("Helvetica-Bold", 11); c.drawString(2.5*cm, y_box - 0.8*cm, f"QTD FATURAS: {len(faturas_selecionadas)}"); c.drawString(10*cm, y_box - 0.8*cm, f"TOTAL DE GUIAS: {qtd_guias}")
+            
+            # Garante conversão para string e trunca se necessário
             lista_faturas_str = [str(f) for f in faturas_selecionadas]; texto_faturas = ", ".join(lista_faturas_str)
             if len(texto_faturas) > 90: texto_faturas = texto_faturas[:90] + "..."
+            
             c.setFont("Helvetica", 10); c.drawString(2.5*cm, y_box - 1.5*cm, f"Ref. Faturas: {texto_faturas}")
-            valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'); c.drawString(2.5*cm, y_box - 2.2*cm, f"Gestor: Walter Vilaça")
+            valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'); c.drawString(2.5*cm, y_box - 2.2*cm, f"Valor Total Declarado: R$ {valor_fmt}")
             y_ass = y_box - 4.5*cm; c.line(2*cm, y_ass, 9*cm, y_ass); c.setFont("Helvetica", 8); c.drawString(2*cm, y_ass - 0.4*cm, "Despachado por (Corpore)")
             c.line(11*cm, y_ass, 19*cm, y_ass); c.drawString(11*cm, y_ass - 0.4*cm, "Transportado por (Motoboy)")
             y_ass2 = y_ass - 2.5*cm; c.line(2*cm, y_ass2, 19*cm, y_ass2); c.setFont("Helvetica-Bold", 9); c.drawString(2*cm, y_ass2 - 0.5*cm, "Recebido por (Carimbo/Assinatura HGeJF)")
             c.setFont("Helvetica-Oblique", 7); c.drawRightString(19*cm, y_ass2 - 1.2*cm, f"Gerado via Sistema Corpore em: {data_envio}")
+        
         desenhar_via(27*cm); c.setDash(4, 4); c.line(1*cm, 14.85*cm, 20*cm, 14.85*cm); c.setFont("Helvetica", 6); c.drawCentredString(10.5*cm, 14.95*cm, "- - - Corte Aqui - - -"); c.setDash([]); desenhar_via(13*cm)
         c.save(); buffer.seek(0); return buffer
 
-    # --- INTERFACE ABAS ---
+    # --- INTERFACE (ABAS) ---
     tab1, tab2, tab3, tab4 = st.tabs(["📝 Nova Fatura", "✏ Editar (Nuvem)", "📈 Relatórios", "📦 Protocolo"])
     meses = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6, "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
 
+    # === ABA 1: NOVA FATURA ===
     with tab1:
         st.header("📝 Nova Fatura")
         if 'df_input' not in st.session_state: st.session_state['df_input'] = pd.DataFrame(columns=["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"])
         c1, c2, c3 = st.columns(3)
         mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1); seq = c1.number_input("Sequencial", 1, 100, 1); fatura_ref = f"{meses[mes_nome]}.{seq}"; c1.info(f"Fatura: **{fatura_ref}**")
-        ano = c2.number_input("Ano", 2024, 2030, 2025); servico = c2.multiselect("Serviço", ["Fisioterapia", "Terapias Especiais TEA/TGD", "Psicologia", "Terapia Ocupacional", "Fonoaudiologia", "Consulta", "Nutrição"], default=["Fisioterapia"]); servico_txt = ", ".join(servico); usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
+        ano = c2.number_input("Ano", 2024, 2030, 2025); servico = c2.multiselect("Serviço", ["Fisioterapia", "Fonoaudiologia", "Consulta"], default=["Fisioterapia"]); servico_txt = ", ".join(servico); usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
+        
         uploaded = st.file_uploader("Arraste os PDFs", type="pdf", accept_multiple_files=True)
         if uploaded and st.button("Processar PDFs"):
             lista = []; bar = st.progress(0)
@@ -360,20 +426,28 @@ def sistema_principal():
                 novo = pd.DataFrame(lista)
                 st.session_state['df_input'] = pd.concat([st.session_state['df_input'], novo], ignore_index=True)
                 st.success(f"{len(lista)} guias lidas!")
+        
         df_editor = st.data_editor(st.session_state['df_input'], num_rows="dynamic")
+        
         try: vals = df_editor['VALOR (R$)'].apply(lambda x: float(str(x).replace('R$','').replace('.','').replace(',','.')) if isinstance(x, str) else x); total = vals.sum()
         except: total = 0.0
         st.metric("Total", f"R$ {total:,.2f}")
+        
         if st.button("💾 Salvar na Nuvem"):
-            df_editor['VALOR_CALC'] = vals; meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
+            df_editor['VALOR_CALC'] = vals
+            meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
+            
             salvar_no_sheets(df_editor, meta)
+            
             doc = criar_template_padrao(); extenso = num2words(total, lang='pt_BR', to='currency').upper()
             tags = {"{{NUM_FATURA}}": fatura_ref, "{{MES_ANO}}": f"{mes_nome}/{ano}", "{{SERVICO}}": servico_txt, "{{TOTAL}}": f"R$ {total:,.2f}", "{{EXTENSO}}": extenso}
             doc = gerar_doc_word(doc, df_editor, tags, usuario)
             buf = BytesIO(); doc.save(buf); buf.seek(0)
+            
             st.download_button("📥 Download DOCX", buf, f"Fatura_{fatura_ref}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             st.success("Salvo com sucesso!")
 
+    # === ABA 2: EDITAR ===
     with tab2:
         st.header("✏ Editar Faturas")
         df_nuvem = carregar_dados_sheets()
@@ -383,12 +457,19 @@ def sistema_principal():
                 df_filtrado = df_nuvem[df_nuvem['fatura_ref'] == sel_fat].copy()
                 meta_orig = {'mes': df_filtrado.iloc[0]['mes_competencia'], 'ano': df_filtrado.iloc[0]['ano_competencia'], 'usuario': df_filtrado.iloc[0]['tipo_usuario'], 'servico': df_filtrado.iloc[0]['servicos_fatura']}
                 st.info(f"Editando: {meta_orig['servico']} | {meta_orig['usuario']}")
-                cols_show = ["paciente_nome", "nr_guia", "data_atend", "cod_proced", "valor"]
-                df_edit = df_filtrado[cols_show].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
+                
+                # Prepara colunas para edição (incluindo PREC-CP se existir)
+                cols_possiveis = ["paciente_nome", "nr_guia", "prec_cp", "data_atend", "cod_proced", "valor"]
+                cols_reais = [c for c in cols_possiveis if c in df_filtrado.columns]
+                
+                df_edit = df_filtrado[cols_reais].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "prec_cp": "PREC-CP/SIAPE", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
+                
                 df_final_edit = st.data_editor(df_edit, num_rows="dynamic")
+                
                 if st.button("🔄 Atualizar Fatura"):
                     atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig); st.success("Atualizado!"); st.rerun()
 
+    # === ABA 3: RELATÓRIOS ===
     with tab3:
         st.header("📊 Dashboard")
         df = carregar_dados_sheets()
@@ -397,6 +478,7 @@ def sistema_principal():
             c1, c2 = st.columns(2); c1.metric("Faturamento Total", f"R$ {total_geral:,.2f}"); c1.metric("Guias", len(df))
             st.bar_chart(df.groupby("mes_competencia")["valor"].sum()); st.dataframe(df)
 
+    # === ABA 4: PROTOCOLO ===
     with tab4:
         st.header("📦 Protocolo")
         df = carregar_dados_sheets()
@@ -420,5 +502,3 @@ if __name__ == "__main__":
         sistema_principal()
     else:
         tela_login()
-
-
