@@ -351,14 +351,22 @@ def sistema_principal():
             row_total = tabela.add_row().cells
             row_total[4].text = "TOTAL"; row_total[5].text = tags["{{TOTAL}}"]
 
-        # 3. Rodapé com Data e Hora (NOVO)
+        # 3. Rodapé com Data e Hora (CORRIGIDO BRASILIA)
         section = doc.sections[0]
         footer = section.footer
         p_footer = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-        agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
+        
+        # Define o fuso horário de Brasília
+        fuso_br = pytz.timezone('America/Sao_Paulo')
+        agora = datetime.now(fuso_br).strftime("%d/%m/%Y às %H:%M")
+        
         p_footer.text = f"Gestão Corpore - Documento gerado em: {agora}"
         p_footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        if p_footer.runs: p_footer.runs[0].font.size = Pt(8)
+        
+        # Garante o tamanho da fonte (cria o run se não existir)
+        if not p_footer.runs:
+            p_footer.add_run()
+        p_footer.runs[0].font.size = Pt(8)
 
         return doc
 
@@ -502,3 +510,4 @@ if __name__ == "__main__":
         sistema_principal()
     else:
         tela_login()
+
