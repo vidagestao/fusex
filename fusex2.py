@@ -348,7 +348,7 @@ def sistema_principal():
         if 'df_input' not in st.session_state: st.session_state['df_input'] = pd.DataFrame(columns=["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"])
         c1, c2, c3 = st.columns(3)
         mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1); seq = c1.number_input("Sequencial", 1, 100, 1); fatura_ref = f"{meses[mes_nome]}.{seq}"; c1.info(f"Fatura: **{fatura_ref}**")
-        ano = c2.number_input("Ano", 2024, 2030, 2025); servico = c2.multiselect("Serviço", ["Fisioterapia", "Fonoaudiologia", "Consulta"], default=["Fisioterapia"]); servico_txt = ", ".join(servico); usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
+        ano = c2.number_input("Ano", 2024, 2030, 2025); servico = c2.multiselect("Serviço", ["Fisioterapia", "Terapias Especiais TEA/TGD", "Psicologia", "Terapia Ocupacional", "Fonoaudiologia", "Consulta", "Nutrição"], default=["Fisioterapia"]); servico_txt = ", ".join(servico); usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
         uploaded = st.file_uploader("Arraste os PDFs", type="pdf", accept_multiple_files=True)
         if uploaded and st.button("Processar PDFs"):
             lista = []; bar = st.progress(0)
@@ -420,4 +420,5 @@ if __name__ == "__main__":
         sistema_principal()
     else:
         tela_login()
+
 
