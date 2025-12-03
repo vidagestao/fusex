@@ -312,7 +312,7 @@ def gerar_pdf_protocolo(faturas_selecionadas, qtd_guias, total_faturas):
         
         # Formatação de Moeda Manual (Funciona bem em qualquer servidor)
         valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-        c.drawString(2.5*cm, y_box - 2.2*cm, f"Valor Total Declarado: R$ {valor_fmt}")
+        c.drawString(2.5*cm, y_box - 2.2*cm, f" ")
         
         # --- Assinaturas ---
         y_ass = y_box - 4.5*cm
@@ -490,5 +490,6 @@ with tab4:
             if st.button("🖨 Baixar PDF Protocolo"):
                 pdf = gerar_pdf_protocolo(sel, qtd, tot)
                 st.download_button("📥 Download PDF", pdf, "Protocolo.pdf", "application/pdf")
+
 
 
