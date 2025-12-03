@@ -1,3 +1,10 @@
 streamlit
 pandas
-st-gsheets-connection
+python-docx
+num2words
+reportlab
+pdfplumber
+pymupdf
+easyocr
+numpy
+Pillow
