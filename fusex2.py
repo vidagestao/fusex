@@ -28,20 +28,20 @@ st.set_page_config(page_title="Corpore - Acesso Seguro", layout="wide", page_ico
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # ==========================================
-# 🛠 FUNÇÕES UTILITÁRIAS (NOVAS REGRAS)
+# 🛠 FUNÇÕES UTILITÁRIAS
 # ==========================================
 
 def limpar_data_sem_ano(texto):
     """
     Remove o ano de datas, mantendo dd/mm ou intervalos.
-    Ex: '12/05/2025' vira '12/05'.
-    Ex: '01/05/24 a 05/05/24' vira '01/05 a 05/05'.
+    Ex: '12/05/2025' -> '12/05'
+    Ex: '01/05 a 05/05/2024' -> '01/05 a 05/05'
     """
-    if not isinstance(texto, str):
-        return str(texto)
+    if pd.isna(texto): return ""
+    texto = str(texto)
     # Remove /2024, /2025, /1999 (anos com 4 dígitos)
     texto = re.sub(r'/\d{4}', '', texto)
-    # Remove /24, /25 (anos com 2 dígitos se houver barra antes)
+    # Remove /24, /25 (anos com 2 dígitos se houver barra antes e não for dia/mês)
     texto = re.sub(r'/\d{2}(?!\d)', '', texto)
     return texto.strip()
 
@@ -53,7 +53,7 @@ def formatar_moeda_br(valor):
         return "R$ 0,00"
 
 # ==========================================
-# 🔐 MÓDULO DE SEGURANÇA E USUÁRIOS
+# 🔐 SEGURANÇA E USUÁRIOS
 # ==========================================
 
 def carregar_usuarios():
@@ -70,9 +70,7 @@ def salvar_novo_usuario(username, name, password):
     
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     novo_usuario = pd.DataFrame([{
-        "username": username,
-        "name": name,
-        "password_hash": hashed,
+        "username": username, "name": name, "password_hash": hashed,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }])
     
@@ -110,11 +108,8 @@ def tela_login():
                 else:
                     sucesso, msg = autenticar_usuario(user, senha)
                     if sucesso:
-                        st.session_state['logado'] = True
-                        st.session_state['usuario_nome'] = msg
-                        st.success("Login realizado! Redirecionando...")
-                        time.sleep(1)
-                        st.rerun()
+                        st.session_state['logado'] = True; st.session_state['usuario_nome'] = msg
+                        st.success("Login realizado!"); time.sleep(1); st.rerun()
                     else: st.error(msg)
     
     with tab2:
@@ -124,23 +119,20 @@ def tela_login():
             new_pass = st.text_input("Escolha uma Senha", type="password")
             new_pass_conf = st.text_input("Confirme a Senha", type="password")
             reg_submitted = st.form_submit_button("Cadastrar Usuário")
-            
             if reg_submitted:
                 if new_pass != new_pass_conf: st.error("As senhas não coincidem!")
                 elif len(new_pass) < 4: st.error("A senha deve ter pelo menos 4 caracteres.")
                 elif not new_user: st.error("O campo usuário é obrigatório.")
                 else:
                     sucesso, msg = salvar_novo_usuario(new_user, new_name, new_pass)
-                    if sucesso: st.success(msg); st.info("Agora vá para a aba 'Entrar' e faça login.")
+                    if sucesso: st.success(msg); st.info("Faça login na aba 'Entrar'.")
                     else: st.error(msg)
 
 def logout():
-    st.session_state['logado'] = False
-    st.session_state['usuario_nome'] = ""
-    st.rerun()
+    st.session_state['logado'] = False; st.session_state['usuario_nome'] = ""; st.rerun()
 
 # ==========================================
-# 🏥 MÓDULO PRINCIPAL (SISTEMA DE FATURAS)
+# 🏥 SISTEMA PRINCIPAL
 # ==========================================
 
 def sistema_principal():
@@ -151,11 +143,11 @@ def sistema_principal():
 
     st.title("🏥 Gestão de Faturas e Guias")
 
-    # --- FUNÇÕES DE BANCO DE DADOS (SHEETS) ---
+    # --- BANCO DE DADOS (SHEETS) ---
     def carregar_dados_sheets():
         try:
             df = conn.read(worksheet="guias", ttl=5)
-            # REGRA 12.1: Converte para string e remove a aspa simples se existir para exibir
+            # TRUQUE 1: Remove a aspa simples ao ler para exibir bonito (12.1)
             if not df.empty and 'fatura_ref' in df.columns:
                 df['fatura_ref'] = df['fatura_ref'].astype(str).str.replace("'", "", regex=False)
             return df
@@ -169,8 +161,8 @@ def sistema_principal():
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
         
-        # REGRA 12.1: Adiciona ' antes do número para forçar TEXTO no Sheets
-        fatura_ref_str = f"'{meta_dados['fatura']}"
+        # TRUQUE 2: Adiciona ' ao salvar ('12.1) para travar formatação no Sheets
+        fatura_ref_safe = f"'{meta_dados['fatura']}"
 
         for _, row in df_novo.iterrows():
             try: val = float(row['VALOR (R$)'])
@@ -180,7 +172,7 @@ def sistema_principal():
             if pd.isna(prec_valor): prec_valor = ""
 
             lista_novos.append({
-                "fatura_ref": fatura_ref_str,
+                "fatura_ref": fatura_ref_safe,
                 "mes_competencia": meta_dados['mes'],
                 "ano_competencia": meta_dados['ano'],
                 "tipo_usuario": meta_dados['usuario'],
@@ -188,7 +180,7 @@ def sistema_principal():
                 "paciente_nome": row['NOME DO PACIENTE'],
                 "nr_guia": row['NR DA GUIA'],
                 "prec_cp": str(prec_valor),
-                "data_atend": limpar_data_sem_ano(row['DATA ATEND.']), # GARANTE DATA LIMPA
+                "data_atend": limpar_data_sem_ano(row['DATA ATEND.']), 
                 "cod_proced": row['CÓDIGO PROCED.'],
                 "valor": val,
                 "data_lancamento": data_hoje
@@ -199,12 +191,13 @@ def sistema_principal():
             df_final = pd.concat([df_existente, df_append], ignore_index=True)
         else:
             df_final = df_append
+        
         try: conn.update(worksheet="guias", data=df_final)
         except: conn.update(worksheet=0, data=df_final)
 
     def atualizar_fatura_sheets(fatura_ref, df_editado, meta_dados):
         df_completo = carregar_dados_sheets()
-        # df_completo já vem sem aspas devido à função carregar
+        # Remove a fatura antiga (comparação string normal pois removemos aspa no load)
         df_limpo = df_completo[df_completo['fatura_ref'] != fatura_ref]
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -227,20 +220,21 @@ def sistema_principal():
                 "paciente_nome": row['NOME DO PACIENTE'],
                 "nr_guia": row['NR DA GUIA'], 
                 "prec_cp": str(prec_cp_val),
-                "data_atend": limpar_data_sem_ano(row['DATA ATEND.']), # GARANTE DATA LIMPA
+                "data_atend": limpar_data_sem_ano(row['DATA ATEND.']), 
                 "cod_proced": row['CÓDIGO PROCED.'], 
                 "valor": val, 
                 "data_lancamento": data_hoje
             })
             
         df_append = pd.DataFrame(lista_novos)
-        # Recupera aspa para o histórico antigo antes de salvar tudo junto
+        
+        # Reaplica aspas no histórico antigo para não perder formatação
         df_limpo['fatura_ref'] = df_limpo['fatura_ref'].apply(lambda x: f"'{x}" if not str(x).startswith("'") else x)
 
         df_final = pd.concat([df_limpo, df_append], ignore_index=True)
         conn.update(worksheet="guias", data=df_final)
 
-    # --- OCR E EXTRAÇÃO ---
+    # --- OCR / PDF ---
     @st.cache_resource
     def load_ocr_reader():
         return easyocr.Reader(['pt'], gpu=False, quantize=True)
@@ -277,10 +271,8 @@ def sistema_principal():
             match_guia = re.search(r'(?:Nr|Numero)[:\.]?\s*(\d+)', text, flags=re.IGNORECASE)
             if match_guia: dados["NR DA GUIA"] = match_guia.group(1)
             
-            # --- DATAS (COM LIMPEZA) ---
             match_data = re.search(r'Data:\s*(\d{2}/\d{2}/\d{4})', text, flags=re.IGNORECASE)
-            if match_data: 
-                dados["DATA ATEND."] = limpar_data_sem_ano(match_data.group(1))
+            if match_data: dados["DATA ATEND."] = limpar_data_sem_ano(match_data.group(1))
             else:
                 datas = re.findall(r'\d{2}/\d{2}/\d{4}', text)
                 if datas: dados["DATA ATEND."] = limpar_data_sem_ano(datas[0])
@@ -302,7 +294,6 @@ def sistema_principal():
                 codigos_validos = [c for c in codigos if not c.startswith("202")]
                 dados["CÓDIGO PROCED."] = ", ".join(sorted(set(codigos_validos)))
             
-            # --- VALOR (CONVERTE PARA FLOAT) ---
             match_total = re.search(r'Total\s*:?\s*([\d\.,]+)', text, flags=re.IGNORECASE)
             if match_total:
                  try: dados["VALOR (R$)"] = float(match_total.group(1).replace('.', '').replace(',', '.'))
@@ -310,7 +301,7 @@ def sistema_principal():
         except: pass
         return dados
 
-    # --- DOC E PDF ---
+    # --- DOCX E PDF ---
     def gerar_doc_word(doc, df_dados, tags, tipo_usuario):
         for p in doc.paragraphs:
             for key, val in tags.items(): 
@@ -329,9 +320,7 @@ def sistema_principal():
             tabela = doc.tables[0]
             for _, row in df_dados.iterrows():
                 cells = tabela.add_row().cells
-                # Formata valor float de volta para string R$ no Word
                 valor_fmt = f"{row.get('VALOR (R$)', 0.0):,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')
-                
                 vals = [row.get("NOME DO PACIENTE", ""), row.get("NR DA GUIA", ""), row.get("DATA ATEND.", ""), row.get("PREC-CP/SIAPE", ""), row.get("CÓDIGO PROCED.", ""), valor_fmt]
                 for i, v in enumerate(vals): 
                     cells[i].text = str(v)
@@ -369,7 +358,6 @@ def sistema_principal():
         buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=A4)
         data_envio = datetime.now().strftime("%d/%m/%Y às %H:%M")
         endereco_fusex = ["Aos Cuidados FUSEX", "Hospital Geral de Juiz de Fora - HGeJF", "Endereço: R. Gen. Deschamps Cavalcante, s/n - Fábrica", "Juiz de Fora - MG, 36080-220"]
-        
         def desenhar_via(y_inicial):
             c.setFont("Helvetica-Bold", 14); c.drawString(2*cm, y_inicial, "CORPORE CENTRO DE SAÚDE LTDA")
             c.setFont("Helvetica", 10); c.drawString(2*cm, y_inicial - 0.5*cm, "PROTOCOLO DE REMESSA DE FATURAS FUSEX")
@@ -377,17 +365,14 @@ def sistema_principal():
             for linha in endereco_fusex: c.drawRightString(19*cm, y_dest, linha); y_dest -= 0.4*cm
             y_box = y_inicial - 2.8*cm; c.rect(2*cm, y_box - 2.5*cm, 17*cm, 2.5*cm)
             c.setFont("Helvetica-Bold", 11); c.drawString(2.5*cm, y_box - 0.8*cm, f"QTD FATURAS: {len(faturas_selecionadas)}"); c.drawString(10*cm, y_box - 0.8*cm, f"TOTAL DE GUIAS: {qtd_guias}")
-            
             lista_faturas_str = [str(f) for f in faturas_selecionadas]; texto_faturas = ", ".join(lista_faturas_str)
             if len(texto_faturas) > 90: texto_faturas = texto_faturas[:90] + "..."
-            
             c.setFont("Helvetica", 10); c.drawString(2.5*cm, y_box - 1.5*cm, f"Ref. Faturas: {texto_faturas}")
             valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'); c.drawString(2.5*cm, y_box - 2.2*cm, f"Valor Total Declarado: R$ {valor_fmt}")
             y_ass = y_box - 4.5*cm; c.line(2*cm, y_ass, 9*cm, y_ass); c.setFont("Helvetica", 8); c.drawString(2*cm, y_ass - 0.4*cm, "Despachado por (Corpore)")
             c.line(11*cm, y_ass, 19*cm, y_ass); c.drawString(11*cm, y_ass - 0.4*cm, "Transportado por (Motoboy)")
             y_ass2 = y_ass - 2.5*cm; c.line(2*cm, y_ass2, 19*cm, y_ass2); c.setFont("Helvetica-Bold", 9); c.drawString(2*cm, y_ass2 - 0.5*cm, "Recebido por (Carimbo/Assinatura HGeJF)")
             c.setFont("Helvetica-Oblique", 7); c.drawRightString(19*cm, y_ass2 - 1.2*cm, f"Gerado via Sistema Corpore em: {data_envio}")
-        
         desenhar_via(27*cm); c.setDash(4, 4); c.line(1*cm, 14.85*cm, 20*cm, 14.85*cm); c.setFont("Helvetica", 6); c.drawCentredString(10.5*cm, 14.95*cm, "- - - Corte Aqui - - -"); c.setDash([]); desenhar_via(13*cm)
         c.save(); buffer.seek(0); return buffer
 
@@ -396,13 +381,21 @@ def sistema_principal():
     meses = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6, "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
 
     # === ABA 1: NOVA FATURA ===
-  # === ABA 1: NOVA FATURA ===
     with tab1:
         st.header("📝 Nova Fatura")
-        if 'df_input' not in st.session_state: 
-            st.session_state['df_input'] = pd.DataFrame(columns=["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"])
-        c1, c2, c3 = st.columns(3)
         
+        # 1. INICIALIZAÇÃO BLINDADA: Define tipos antes de qualquer dado entrar
+        if 'df_input' not in st.session_state: 
+            st.session_state['df_input'] = pd.DataFrame({
+                "NOME DO PACIENTE": pd.Series(dtype='str'),
+                "NR DA GUIA": pd.Series(dtype='str'),
+                "DATA ATEND.": pd.Series(dtype='str'), # AQUI É O SEGREDO (STRING)
+                "PREC-CP/SIAPE": pd.Series(dtype='str'),
+                "CÓDIGO PROCED.": pd.Series(dtype='str'),
+                "VALOR (R$)": pd.Series(dtype='float')
+            })
+
+        c1, c2, c3 = st.columns(3)
         mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1)
         seq = c1.number_input("Sequencial", 1, 100, 1)
         fatura_ref = f"{meses[mes_nome]}.{seq}"
@@ -422,65 +415,43 @@ def sistema_principal():
                 bar.progress((i+1)/len(uploaded))
             if lista:
                 novo = pd.DataFrame(lista)
+                # Garante que dados novos também sejam string
+                novo["DATA ATEND."] = novo["DATA ATEND."].astype(str)
                 st.session_state['df_input'] = pd.concat([st.session_state['df_input'], novo], ignore_index=True)
                 st.success(f"{len(lista)} guias lidas!")
         
-        # --- CORREÇÃO AQUI (FORÇA TEXTO) ---
-        # Garante que DATA ATEND. seja tratada como Texto, não número
-        st.session_state['df_input']['DATA ATEND.'] = st.session_state['df_input']['DATA ATEND.'].astype(str)
-        st.session_state['df_input']['DATA ATEND.'] = st.session_state['df_input']['DATA ATEND.'].replace('nan', '')
+        # GARANTIA FINAL ANTES DO EDITOR
+        st.session_state['df_input']['DATA ATEND.'] = st.session_state['df_input']['DATA ATEND.'].astype(str).replace('nan', '')
+        st.session_state['df_input']['VALOR (R$)'] = pd.to_numeric(st.session_state['df_input']['VALOR (R$)'], errors='coerce').fillna(0.0)
 
-        # --- TABELA DE EDIÇÃO ---
         df_editor = st.data_editor(
             st.session_state['df_input'], 
             num_rows="dynamic",
             column_config={
-                "VALOR (R$)": st.column_config.NumberColumn(
-                    "Valor (R$)",
-                    help="Valor do procedimento",
-                    min_value=0,
-                    step=0.01,
-                    format="R$ %.2f"
-                ),
-                "DATA ATEND.": st.column_config.TextColumn(
-                    "Data (dd/mm)",
-                    help="Use apenas dd/mm ou intervalos",
-                    # Removemos validações rígidas que podem travar a edição
-                    validate=None 
-                )
+                "VALOR (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+                # Força explicitamente coluna de Texto
+                "DATA ATEND.": st.column_config.TextColumn("Data (dd/mm)", help="Texto livre: 05/11 ou 05/11 a 08/11")
             }
         )
         
-        try: 
-            # Garante float para soma
-            df_editor['VALOR (R$)'] = pd.to_numeric(df_editor['VALOR (R$)'], errors='coerce').fillna(0.0)
-            total = df_editor['VALOR (R$)'].sum()
-        except: total = 0.0
-        
+        total = df_editor['VALOR (R$)'].sum()
         st.metric("Total", formatar_moeda_br(total))
         
         if st.button("💾 Salvar na Nuvem"):
-            # Limpeza final de data
-            df_editor['DATA ATEND.'] = df_editor['DATA ATEND.'].apply(limpar_data_sem_ano)
+            df_editor['DATA ATEND.'] = df_editor['DATA ATEND.'].astype(str).apply(limpar_data_sem_ano)
             
             meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
             salvar_no_sheets(df_editor, meta)
             
             doc = criar_template_padrao()
             extenso = num2words(total, lang='pt_BR', to='currency').upper()
-            tags = {
-                "{{NUM_FATURA}}": fatura_ref, 
-                "{{MES_ANO}}": f"{mes_nome}/{ano}", 
-                "{{SERVICO}}": servico_txt, 
-                "{{TOTAL}}": formatar_moeda_br(total), 
-                "{{EXTENSO}}": extenso
-            }
+            tags = {"{{NUM_FATURA}}": fatura_ref, "{{MES_ANO}}": f"{mes_nome}/{ano}", "{{SERVICO}}": servico_txt, "{{TOTAL}}": formatar_moeda_br(total), "{{EXTENSO}}": extenso}
             doc = gerar_doc_word(doc, df_editor, tags, usuario)
             buf = BytesIO(); doc.save(buf); buf.seek(0)
             
             st.download_button("📥 Download DOCX", buf, f"Fatura_{fatura_ref}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             st.success("Salvo com sucesso!")
-   # === ABA 2: EDITAR ===
+
     # === ABA 2: EDITAR ===
     with tab2:
         st.header("✏ Editar Faturas")
@@ -499,12 +470,10 @@ def sistema_principal():
                 
                 df_edit = df_filtrado[cols_reais].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "prec_cp": "PREC-CP/SIAPE", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
                 
-                # --- FORÇA TIPAGEM CORRETA ---
+                # BLINDAGEM DE TIPOS PARA EDIÇÃO
                 df_edit["VALOR (R$)"] = pd.to_numeric(df_edit["VALOR (R$)"], errors='coerce').fillna(0.0)
-                # Força Data como string e remove 'nan' literal se existir
                 df_edit["DATA ATEND."] = df_edit["DATA ATEND."].astype(str).replace('nan', '')
 
-                # Aplica configuração
                 df_final_edit = st.data_editor(
                     df_edit, 
                     num_rows="dynamic",
@@ -515,10 +484,10 @@ def sistema_principal():
                 )
                 
                 if st.button("🔄 Atualizar Fatura"):
-                    df_final_edit['DATA ATEND.'] = df_final_edit['DATA ATEND.'].apply(limpar_data_sem_ano)
+                    df_final_edit['DATA ATEND.'] = df_final_edit['DATA ATEND.'].astype(str).apply(limpar_data_sem_ano)
                     atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig)
                     st.success("Atualizado!"); time.sleep(1); st.rerun()
-                    
+
     # === ABA 3: RELATÓRIOS ===
     with tab3:
         st.header("📊 Dashboard")
@@ -548,15 +517,10 @@ def sistema_principal():
                     st.download_button("📥 PDF", pdf, "Protocolo.pdf", "application/pdf")
 
 # ==========================================
-# 🏁 PONTO DE PARTIDA (MAIN)
+# 🏁 MAIN
 # ==========================================
 
 if __name__ == "__main__":
     if 'logado' not in st.session_state: st.session_state['logado'] = False
-
-    if st.session_state['logado']:
-        sistema_principal()
-    else:
-        tela_login()
-
-
+    if st.session_state['logado']: sistema_principal()
+    else: tela_login()
