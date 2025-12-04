@@ -6,6 +6,9 @@ from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from num2words import num2words
 import os
+import sys
+import subprocess
+import tempfile
 from datetime import datetime
 import pytz 
 from reportlab.lib.pagesizes import A4
@@ -32,25 +35,41 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # ==========================================
 
 def limpar_data_sem_ano(texto):
-    """
-    Remove o ano de datas, mantendo dd/mm ou intervalos.
-    Ex: '12/05/2025' -> '12/05'
-    Ex: '01/05 a 05/05/2024' -> '01/05 a 05/05'
-    """
+    """Remove o ano de datas, mantendo dd/mm ou intervalos."""
     if pd.isna(texto): return ""
     texto = str(texto)
-    # Remove /2024, /2025, /1999 (anos com 4 dígitos)
     texto = re.sub(r'/\d{4}', '', texto)
-    # Remove /24, /25 (anos com 2 dígitos se houver barra antes e não for dia/mês)
     texto = re.sub(r'/\d{2}(?!\d)', '', texto)
     return texto.strip()
 
 def formatar_moeda_br(valor):
-    """Formata float para string brasileira R$ 1.000,00"""
     try:
         return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "R$ 0,00"
+
+def enviar_impressao_direta(buffer_arquivo, nome_arquivo="temp_print.docx"):
+    """Salva o arquivo temporariamente e manda imprimir via terminal do SO"""
+    try:
+        temp_dir = tempfile.gettempdir()
+        caminho_temp = os.path.join(temp_dir, nome_arquivo)
+        
+        # Salva o buffer em disco
+        with open(caminho_temp, "wb") as f:
+            f.write(buffer_arquivo.getvalue())
+            
+        # Comando para Windows
+        if os.name == 'nt':
+            os.startfile(caminho_temp, "print")
+            return True, "Enviado para a impressora padrão (Windows)!"
+        
+        # Comando para Linux/Mac (CUPS)
+        else:
+            subprocess.run(["lp", caminho_temp], check=True)
+            return True, "Enviado para a impressora (Linux/Mac)!"
+            
+    except Exception as e:
+        return False, f"Erro na impressão direta: {str(e)}"
 
 # ==========================================
 # 🔐 SEGURANÇA E USUÁRIOS
@@ -147,7 +166,6 @@ def sistema_principal():
     def carregar_dados_sheets():
         try:
             df = conn.read(worksheet="guias", ttl=5)
-            # TRUQUE 1: Remove a aspa simples ao ler para exibir bonito (12.1)
             if not df.empty and 'fatura_ref' in df.columns:
                 df['fatura_ref'] = df['fatura_ref'].astype(str).str.replace("'", "", regex=False)
             return df
@@ -160,8 +178,6 @@ def sistema_principal():
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
-        
-        # TRUQUE 2: Adiciona ' ao salvar ('12.1) para travar formatação no Sheets
         fatura_ref_safe = f"'{meta_dados['fatura']}"
 
         for _, row in df_novo.iterrows():
@@ -197,7 +213,6 @@ def sistema_principal():
 
     def atualizar_fatura_sheets(fatura_ref, df_editado, meta_dados):
         df_completo = carregar_dados_sheets()
-        # Remove a fatura antiga (comparação string normal pois removemos aspa no load)
         df_limpo = df_completo[df_completo['fatura_ref'] != fatura_ref]
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -227,10 +242,7 @@ def sistema_principal():
             })
             
         df_append = pd.DataFrame(lista_novos)
-        
-        # Reaplica aspas no histórico antigo para não perder formatação
         df_limpo['fatura_ref'] = df_limpo['fatura_ref'].apply(lambda x: f"'{x}" if not str(x).startswith("'") else x)
-
         df_final = pd.concat([df_limpo, df_append], ignore_index=True)
         conn.update(worksheet="guias", data=df_final)
 
@@ -377,19 +389,17 @@ def sistema_principal():
         c.save(); buffer.seek(0); return buffer
 
     # --- INTERFACE (ABAS) ---
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Nova Fatura", "✏ Editar (Nuvem)", "📈 Relatórios", "📦 Protocolo"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Nova Fatura", "✏ Editar (Nuvem)", "📊 Relatórios e 2ª Via", "📦 Protocolo"])
     meses = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6, "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
 
     # === ABA 1: NOVA FATURA ===
     with tab1:
         st.header("📝 Nova Fatura")
-        
-        # 1. INICIALIZAÇÃO BLINDADA: Define tipos antes de qualquer dado entrar
         if 'df_input' not in st.session_state: 
             st.session_state['df_input'] = pd.DataFrame({
                 "NOME DO PACIENTE": pd.Series(dtype='str'),
                 "NR DA GUIA": pd.Series(dtype='str'),
-                "DATA ATEND.": pd.Series(dtype='str'), # AQUI É O SEGREDO (STRING)
+                "DATA ATEND.": pd.Series(dtype='str'),
                 "PREC-CP/SIAPE": pd.Series(dtype='str'),
                 "CÓDIGO PROCED.": pd.Series(dtype='str'),
                 "VALOR (R$)": pd.Series(dtype='float')
@@ -415,12 +425,10 @@ def sistema_principal():
                 bar.progress((i+1)/len(uploaded))
             if lista:
                 novo = pd.DataFrame(lista)
-                # Garante que dados novos também sejam string
                 novo["DATA ATEND."] = novo["DATA ATEND."].astype(str)
                 st.session_state['df_input'] = pd.concat([st.session_state['df_input'], novo], ignore_index=True)
                 st.success(f"{len(lista)} guias lidas!")
         
-        # GARANTIA FINAL ANTES DO EDITOR
         st.session_state['df_input']['DATA ATEND.'] = st.session_state['df_input']['DATA ATEND.'].astype(str).replace('nan', '')
         st.session_state['df_input']['VALOR (R$)'] = pd.to_numeric(st.session_state['df_input']['VALOR (R$)'], errors='coerce').fillna(0.0)
 
@@ -429,7 +437,6 @@ def sistema_principal():
             num_rows="dynamic",
             column_config={
                 "VALOR (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
-                # Força explicitamente coluna de Texto
                 "DATA ATEND.": st.column_config.TextColumn("Data (dd/mm)", help="Texto livre: 05/11 ou 05/11 a 08/11")
             }
         )
@@ -439,7 +446,6 @@ def sistema_principal():
         
         if st.button("💾 Salvar na Nuvem"):
             df_editor['DATA ATEND.'] = df_editor['DATA ATEND.'].astype(str).apply(limpar_data_sem_ano)
-            
             meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
             salvar_no_sheets(df_editor, meta)
             
@@ -470,7 +476,6 @@ def sistema_principal():
                 
                 df_edit = df_filtrado[cols_reais].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "prec_cp": "PREC-CP/SIAPE", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
                 
-                # BLINDAGEM DE TIPOS PARA EDIÇÃO
                 df_edit["VALOR (R$)"] = pd.to_numeric(df_edit["VALOR (R$)"], errors='coerce').fillna(0.0)
                 df_edit["DATA ATEND."] = df_edit["DATA ATEND."].astype(str).replace('nan', '')
 
@@ -488,18 +493,61 @@ def sistema_principal():
                     atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig)
                     st.success("Atualizado!"); time.sleep(1); st.rerun()
 
-    # === ABA 3: RELATÓRIOS ===
+    # === ABA 3: RELATÓRIOS E 2ª VIA ===
     with tab3:
-        st.header("📊 Dashboard")
+        st.header("📊 Relatórios")
         df = carregar_dados_sheets()
         if not df.empty:
             df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+            
+            st.subheader("🖨️ Emissão de 2ª Via")
+            faturas_2via = df['fatura_ref'].unique()
+            col_sel, col_btn = st.columns([2, 1])
+            sel_2via = col_sel.selectbox("Selecione a fatura para 2ª Via", faturas_2via)
+            
+            if sel_2via:
+                # Reconstrói os dados
+                df_fat = df[df['fatura_ref'] == sel_2via]
+                meta_fat = {
+                    'mes': df_fat.iloc[0]['mes_competencia'],
+                    'ano': df_fat.iloc[0]['ano_competencia'],
+                    'usuario': df_fat.iloc[0]['tipo_usuario'],
+                    'servico': df_fat.iloc[0]['servicos_fatura']
+                }
+                
+                df_tabela = df_fat[["paciente_nome", "nr_guia", "data_atend", "prec_cp", "cod_proced", "valor"]].copy()
+                df_tabela.columns = ["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"]
+                
+                total_fat = df_tabela["VALOR (R$)"].sum()
+                extenso_fat = num2words(total_fat, lang='pt_BR', to='currency').upper()
+                tags_fat = {"{{NUM_FATURA}}": sel_2via, "{{MES_ANO}}": f"{meta_fat['mes']}/{meta_fat['ano']}", "{{SERVICO}}": meta_fat['servico'], "{{TOTAL}}": formatar_moeda_br(total_fat), "{{EXTENSO}}": extenso_fat}
+
+                # Gera o DOCX em memória
+                doc_2via = criar_template_padrao()
+                doc_2via = gerar_doc_word(doc_2via, df_tabela, tags_fat, meta_fat['usuario'])
+                buf_2via = BytesIO()
+                doc_2via.save(buf_2via)
+                buf_2via.seek(0)
+                
+                c_down, c_print = st.columns(2)
+                c_down.download_button("📥 Baixar 2ª Via (DOCX)", buf_2via, f"2Via_{sel_2via}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                
+                # RECURSO DE IMPRESSÃO DIRETA
+                if c_print.button("🖨️ Imprimir Direto (Terminal)"):
+                    buf_2via.seek(0) # Reseta ponteiro
+                    ok, msg_imp = enviar_impressao_direta(buf_2via, f"Print_{sel_2via}.docx")
+                    if ok: st.success(msg_imp)
+                    else: st.error(msg_imp)
+            
+            st.divider()
+            # Dashboard Original
             total_geral = df['valor'].sum()
             c1, c2 = st.columns(2)
-            c1.metric("Faturamento Total", formatar_moeda_br(total_geral))
-            c1.metric("Guias Processadas", len(df))
+            c1.metric("Faturamento Total Acumulado", formatar_moeda_br(total_geral))
+            c1.metric("Total de Guias Processadas", len(df))
             st.bar_chart(df.groupby("mes_competencia")["valor"].sum())
-            st.dataframe(df)
+            with st.expander("Ver Base de Dados Completa"):
+                st.dataframe(df)
 
     # === ABA 4: PROTOCOLO ===
     with tab4:
