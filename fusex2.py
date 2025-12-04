@@ -2,7 +2,7 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from docx import Document
-from docx.shared import Pt, Cm
+from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from num2words import num2words
 import os
@@ -28,11 +28,35 @@ st.set_page_config(page_title="Corpore - Acesso Seguro", layout="wide", page_ico
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # ==========================================
+# 🛠 FUNÇÕES UTILITÁRIAS (NOVAS REGRAS)
+# ==========================================
+
+def limpar_data_sem_ano(texto):
+    """
+    Remove o ano de datas, mantendo dd/mm ou intervalos.
+    Ex: '12/05/2025' vira '12/05'.
+    Ex: '01/05/24 a 05/05/24' vira '01/05 a 05/05'.
+    """
+    if not isinstance(texto, str):
+        return str(texto)
+    # Remove /2024, /2025, /1999 (anos com 4 dígitos)
+    texto = re.sub(r'/\d{4}', '', texto)
+    # Remove /24, /25 (anos com 2 dígitos se houver barra antes)
+    texto = re.sub(r'/\d{2}(?!\d)', '', texto)
+    return texto.strip()
+
+def formatar_moeda_br(valor):
+    """Formata float para string brasileira R$ 1.000,00"""
+    try:
+        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "R$ 0,00"
+
+# ==========================================
 # 🔐 MÓDULO DE SEGURANÇA E USUÁRIOS
 # ==========================================
 
 def carregar_usuarios():
-    """Carrega a tabela de usuários. Se não existir, cria estrutura."""
     try:
         df = conn.read(worksheet="usuarios", ttl=0)
         return df
@@ -40,14 +64,11 @@ def carregar_usuarios():
         return pd.DataFrame(columns=["username", "name", "password_hash", "created_at"])
 
 def salvar_novo_usuario(username, name, password):
-    """Criptografa a senha e salva o novo usuário no Sheets."""
     df_users = carregar_usuarios()
-    
     if not df_users.empty and username in df_users['username'].values:
         return False, "Usuário já existe!"
     
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    
     novo_usuario = pd.DataFrame([{
         "username": username,
         "name": name,
@@ -63,28 +84,20 @@ def salvar_novo_usuario(username, name, password):
         return False, f"Erro ao salvar: {e}"
 
 def autenticar_usuario(username, password):
-    """Verifica se usuário e senha batem com o banco."""
     df_users = carregar_usuarios()
-    
-    if df_users.empty:
-        return False, "Nenhum usuário cadastrado."
+    if df_users.empty: return False, "Nenhum usuário cadastrado."
     
     user_row = df_users[df_users['username'] == username]
-    
-    if user_row.empty:
-        return False, "Usuário não encontrado."
+    if user_row.empty: return False, "Usuário não encontrado."
     
     stored_hash = user_row.iloc[0]['password_hash']
-    
     if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
         return True, user_row.iloc[0]['name']
     else:
         return False, "Senha incorreta."
 
 def tela_login():
-    """Gerencia a interface de Login e Cadastro."""
     st.markdown("## 🏥 Corpore Centro de Saúde")
-    
     tab1, tab2 = st.tabs(["🔓 Entrar", "📝 Criar Conta"])
     
     with tab1:
@@ -92,10 +105,8 @@ def tela_login():
             user = st.text_input("Usuário")
             senha = st.text_input("Senha", type="password")
             submitted = st.form_submit_button("Acessar Sistema", type="primary")
-            
             if submitted:
-                if not user or not senha:
-                    st.warning("Preencha todos os campos.")
+                if not user or not senha: st.warning("Preencha todos os campos.")
                 else:
                     sucesso, msg = autenticar_usuario(user, senha)
                     if sucesso:
@@ -104,33 +115,24 @@ def tela_login():
                         st.success("Login realizado! Redirecionando...")
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.error(msg)
+                    else: st.error(msg)
     
     with tab2:
-        st.caption("Primeiro acesso? Crie seu login aqui.")
         with st.form("register_form"):
             new_user = st.text_input("Escolha um Usuário (Login)")
             new_name = st.text_input("Seu Nome Completo")
             new_pass = st.text_input("Escolha uma Senha", type="password")
             new_pass_conf = st.text_input("Confirme a Senha", type="password")
-            
             reg_submitted = st.form_submit_button("Cadastrar Usuário")
             
             if reg_submitted:
-                if new_pass != new_pass_conf:
-                    st.error("As senhas não coincidem!")
-                elif len(new_pass) < 4:
-                    st.error("A senha deve ter pelo menos 4 caracteres.")
-                elif not new_user:
-                    st.error("O campo usuário é obrigatório.")
+                if new_pass != new_pass_conf: st.error("As senhas não coincidem!")
+                elif len(new_pass) < 4: st.error("A senha deve ter pelo menos 4 caracteres.")
+                elif not new_user: st.error("O campo usuário é obrigatório.")
                 else:
                     sucesso, msg = salvar_novo_usuario(new_user, new_name, new_pass)
-                    if sucesso:
-                        st.success(msg)
-                        st.info("Agora vá para a aba 'Entrar' e faça login.")
-                    else:
-                        st.error(msg)
+                    if sucesso: st.success(msg); st.info("Agora vá para a aba 'Entrar' e faça login.")
+                    else: st.error(msg)
 
 def logout():
     st.session_state['logado'] = False
@@ -144,8 +146,7 @@ def logout():
 def sistema_principal():
     with st.sidebar:
         st.write(f"Olá, **{st.session_state['usuario_nome']}**! 👋")
-        if st.button("Sair / Logout"):
-            logout()
+        if st.button("Sair / Logout"): logout()
         st.divider()
 
     st.title("🏥 Gestão de Faturas e Guias")
@@ -154,7 +155,7 @@ def sistema_principal():
     def carregar_dados_sheets():
         try:
             df = conn.read(worksheet="guias", ttl=5)
-            # CORREÇÃO: Converte para string e remove a aspa simples se existir
+            # REGRA 12.1: Converte para string e remove a aspa simples se existir para exibir
             if not df.empty and 'fatura_ref' in df.columns:
                 df['fatura_ref'] = df['fatura_ref'].astype(str).str.replace("'", "", regex=False)
             return df
@@ -162,26 +163,24 @@ def sistema_principal():
             return pd.DataFrame(columns=["fatura_ref", "mes_competencia", "ano_competencia", "tipo_usuario", "servicos_fatura", "paciente_nome", "nr_guia", "prec_cp", "data_atend", "cod_proced", "valor", "data_lancamento"])
 
     def salvar_no_sheets(df_novo, meta_dados):
-        try: 
-            df_existente = conn.read(worksheet="guias", ttl=5)
-        except: 
-            df_existente = pd.DataFrame()
+        try: df_existente = conn.read(worksheet="guias", ttl=5)
+        except: df_existente = pd.DataFrame()
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
         
-        # CORREÇÃO: Adiciona ' antes do número para forçar TEXTO no Sheets
+        # REGRA 12.1: Adiciona ' antes do número para forçar TEXTO no Sheets
         fatura_ref_str = f"'{meta_dados['fatura']}"
 
         for _, row in df_novo.iterrows():
-            try: val = row['VALOR_CALC']
+            try: val = float(row['VALOR (R$)'])
             except: val = 0.0
             
             prec_valor = row.get('PREC-CP/SIAPE', '')
             if pd.isna(prec_valor): prec_valor = ""
 
             lista_novos.append({
-                "fatura_ref": fatura_ref_str,  # Usando a versão com aspa
+                "fatura_ref": fatura_ref_str,
                 "mes_competencia": meta_dados['mes'],
                 "ano_competencia": meta_dados['ano'],
                 "tipo_usuario": meta_dados['usuario'],
@@ -189,48 +188,38 @@ def sistema_principal():
                 "paciente_nome": row['NOME DO PACIENTE'],
                 "nr_guia": row['NR DA GUIA'],
                 "prec_cp": str(prec_valor),
-                "data_atend": row['DATA ATEND.'],
+                "data_atend": limpar_data_sem_ano(row['DATA ATEND.']), # GARANTE DATA LIMPA
                 "cod_proced": row['CÓDIGO PROCED.'],
                 "valor": val,
                 "data_lancamento": data_hoje
             })
         
         df_append = pd.DataFrame(lista_novos)
-        
         if not df_existente.empty:
             df_final = pd.concat([df_existente, df_append], ignore_index=True)
         else:
             df_final = df_append
-        
-        try: 
-            conn.update(worksheet="guias", data=df_final)
-        except: 
-            conn.update(worksheet=0, data=df_final)
+        try: conn.update(worksheet="guias", data=df_final)
+        except: conn.update(worksheet=0, data=df_final)
 
     def atualizar_fatura_sheets(fatura_ref, df_editado, meta_dados):
         df_completo = carregar_dados_sheets()
-        
-        # Como carregar_dados_sheets limpa a aspa, a comparação aqui funciona normal
+        # df_completo já vem sem aspas devido à função carregar
         df_limpo = df_completo[df_completo['fatura_ref'] != fatura_ref]
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
-        
-        # CORREÇÃO: Adiciona ' antes do número para forçar TEXTO no Sheets ao salvar
         fatura_ref_safe = f"'{fatura_ref}"
 
         for _, row in df_editado.iterrows():
-            try:
-                raw_val = str(row['VALOR (R$)'])
-                val = float(raw_val.replace('R$', '').replace('.', '').replace(',', '.'))
+            try: val = float(row['VALOR (R$)'])
             except: val = 0.0
             
             prec_cp_val = row.get('PREC-CP/SIAPE', '')
-            if not prec_cp_val and 'prec_cp' in row:
-                 prec_cp_val = row['prec_cp']
+            if not prec_cp_val and 'prec_cp' in row: prec_cp_val = row['prec_cp']
 
             lista_novos.append({
-                "fatura_ref": fatura_ref_safe, # Salvando com a aspa
+                "fatura_ref": fatura_ref_safe,
                 "mes_competencia": meta_dados['mes'],
                 "ano_competencia": meta_dados['ano'], 
                 "tipo_usuario": meta_dados['usuario'],
@@ -238,19 +227,14 @@ def sistema_principal():
                 "paciente_nome": row['NOME DO PACIENTE'],
                 "nr_guia": row['NR DA GUIA'], 
                 "prec_cp": str(prec_cp_val),
-                "data_atend": row['DATA ATEND.'],
+                "data_atend": limpar_data_sem_ano(row['DATA ATEND.']), # GARANTE DATA LIMPA
                 "cod_proced": row['CÓDIGO PROCED.'], 
                 "valor": val, 
                 "data_lancamento": data_hoje
             })
             
         df_append = pd.DataFrame(lista_novos)
-        
-        # No DataFrame final, precisamos ter cuidado porque df_limpo não tem aspa e df_append tem
-        # O ideal é salvar tudo com aspa se formos reescrever a tabela toda.
-        # Mas para simplificar e garantir: vamos salvar o append formatado.
-        
-        # Precisamos garantir que o histórico (df_limpo) também volte com a aspa para o Sheets
+        # Recupera aspa para o histórico antigo antes de salvar tudo junto
         df_limpo['fatura_ref'] = df_limpo['fatura_ref'].apply(lambda x: f"'{x}" if not str(x).startswith("'") else x)
 
         df_final = pd.concat([df_limpo, df_append], ignore_index=True)
@@ -293,8 +277,13 @@ def sistema_principal():
             match_guia = re.search(r'(?:Nr|Numero)[:\.]?\s*(\d+)', text, flags=re.IGNORECASE)
             if match_guia: dados["NR DA GUIA"] = match_guia.group(1)
             
+            # --- DATAS (COM LIMPEZA) ---
             match_data = re.search(r'Data:\s*(\d{2}/\d{2}/\d{4})', text, flags=re.IGNORECASE)
-            if match_data: dados["DATA ATEND."] = match_data.group(1)
+            if match_data: 
+                dados["DATA ATEND."] = limpar_data_sem_ano(match_data.group(1))
+            else:
+                datas = re.findall(r'\d{2}/\d{2}/\d{4}', text)
+                if datas: dados["DATA ATEND."] = limpar_data_sem_ano(datas[0])
             
             match_titular = re.search(r'Titular:\s*\(.*?\)\s*\n?(.+)', text, flags=re.IGNORECASE)
             match_dependente = re.search(r'Dependente:\s*\(.*?\)\s*\n?(.+)', text, flags=re.IGNORECASE)
@@ -313,6 +302,7 @@ def sistema_principal():
                 codigos_validos = [c for c in codigos if not c.startswith("202")]
                 dados["CÓDIGO PROCED."] = ", ".join(sorted(set(codigos_validos)))
             
+            # --- VALOR (CONVERTE PARA FLOAT) ---
             match_total = re.search(r'Total\s*:?\s*([\d\.,]+)', text, flags=re.IGNORECASE)
             if match_total:
                  try: dados["VALOR (R$)"] = float(match_total.group(1).replace('.', '').replace(',', '.'))
@@ -339,12 +329,12 @@ def sistema_principal():
             tabela = doc.tables[0]
             for _, row in df_dados.iterrows():
                 cells = tabela.add_row().cells
-                vals = [row.get("NOME DO PACIENTE", ""), row.get("NR DA GUIA", ""), row.get("DATA ATEND.", ""), row.get("PREC-CP/SIAPE", ""), row.get("CÓDIGO PROCED.", ""), row.get("VALOR (R$)", "0,00")]
+                # Formata valor float de volta para string R$ no Word
+                valor_fmt = f"{row.get('VALOR (R$)', 0.0):,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')
+                
+                vals = [row.get("NOME DO PACIENTE", ""), row.get("NR DA GUIA", ""), row.get("DATA ATEND.", ""), row.get("PREC-CP/SIAPE", ""), row.get("CÓDIGO PROCED.", ""), valor_fmt]
                 for i, v in enumerate(vals): 
-                    if i==5: 
-                        try: cells[i].text = f"{float(str(v).replace('R$','').replace(',','.')):,.2f}".replace('.',',')
-                        except: cells[i].text = str(v)
-                    else: cells[i].text = str(v)
+                    cells[i].text = str(v)
                     if cells[i].paragraphs: cells[i].paragraphs[0].runs[0].font.size = Pt(9)
             row_total = tabela.add_row().cells
             row_total[4].text = "TOTAL"; row_total[5].text = tags["{{TOTAL}}"]
@@ -359,7 +349,6 @@ def sistema_principal():
         p_footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         if not p_footer.runs: p_footer.add_run()
         p_footer.runs[0].font.size = Pt(8)
-
         return doc
 
     def criar_template_padrao():
@@ -409,22 +398,19 @@ def sistema_principal():
     # === ABA 1: NOVA FATURA ===
     with tab1:
         st.header("📝 Nova Fatura")
-        if 'df_input' not in st.session_state: st.session_state['df_input'] = pd.DataFrame(columns=["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"])
+        if 'df_input' not in st.session_state: 
+            st.session_state['df_input'] = pd.DataFrame(columns=["NOME DO PACIENTE", "NR DA GUIA", "DATA ATEND.", "PREC-CP/SIAPE", "CÓDIGO PROCED.", "VALOR (R$)"])
         c1, c2, c3 = st.columns(3)
         
         mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1)
         seq = c1.number_input("Sequencial", 1, 100, 1)
-        
-        # Garante que é string aqui
+        # Regra do texto para fatura
         fatura_ref = f"{meses[mes_nome]}.{seq}"
         c1.info(f"Fatura: **{fatura_ref}**")
         
         ano = c2.number_input("Ano", 2024, 2030, 2025)
-        
-        lista_servicos = ["Consulta", "Fisioterapia", "Fonoaudiologia", "Psicologia", "Terapia Ocupacional", "Terapias Especiais TEA/TGD"]
-        servico = c2.multiselect("Serviço", lista_servicos, default=["Fisioterapia"])
+        servico = c2.multiselect("Serviço", ["Consulta", "Fisioterapia", "Fonoaudiologia", "Psicologia", "Terapia Ocupacional", "Terapias Especiais TEA/TGD"], default=["Fisioterapia"])
         servico_txt = ", ".join(servico)
-        
         usuario = c3.radio("Convênio", ["FUSEX", "PASS", "S.CIVIL"])
         
         uploaded = st.file_uploader("Arraste os PDFs", type="pdf", accept_multiple_files=True)
@@ -439,20 +425,50 @@ def sistema_principal():
                 st.session_state['df_input'] = pd.concat([st.session_state['df_input'], novo], ignore_index=True)
                 st.success(f"{len(lista)} guias lidas!")
         
-        df_editor = st.data_editor(st.session_state['df_input'], num_rows="dynamic")
+        # --- TABELA DE EDIÇÃO COM FORMATAÇÃO VISUAL ---
+        df_editor = st.data_editor(
+            st.session_state['df_input'], 
+            num_rows="dynamic",
+            column_config={
+                "VALOR (R$)": st.column_config.NumberColumn(
+                    "Valor (R$)",
+                    help="Valor do procedimento",
+                    min_value=0,
+                    step=0.01,
+                    format="R$ %.2f" # Exibe R$ 1.200,00 na tela
+                ),
+                "DATA ATEND.": st.column_config.TextColumn(
+                    "Data (dd/mm)",
+                    help="Use apenas dd/mm ou intervalos",
+                    validate="^[\d/ a-zA-Z]+$"
+                )
+            }
+        )
         
-        try: vals = df_editor['VALOR (R$)'].apply(lambda x: float(str(x).replace('R$','').replace('.','').replace(',','.')) if isinstance(x, str) else x); total = vals.sum()
+        try: 
+            # Garante float para soma
+            df_editor['VALOR (R$)'] = df_editor['VALOR (R$)'].astype(float)
+            total = df_editor['VALOR (R$)'].sum()
         except: total = 0.0
-        st.metric("Total", f"R$ {total:,.2f}")
+        
+        st.metric("Total", formatar_moeda_br(total))
         
         if st.button("💾 Salvar na Nuvem"):
-            df_editor['VALOR_CALC'] = vals
-            meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
+            # Limpeza final de data caso usuário tenha digitado ano na mão
+            df_editor['DATA ATEND.'] = df_editor['DATA ATEND.'].apply(limpar_data_sem_ano)
             
+            meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
             salvar_no_sheets(df_editor, meta)
             
-            doc = criar_template_padrao(); extenso = num2words(total, lang='pt_BR', to='currency').upper()
-            tags = {"{{NUM_FATURA}}": fatura_ref, "{{MES_ANO}}": f"{mes_nome}/{ano}", "{{SERVICO}}": servico_txt, "{{TOTAL}}": f"R$ {total:,.2f}", "{{EXTENSO}}": extenso}
+            doc = criar_template_padrao()
+            extenso = num2words(total, lang='pt_BR', to='currency').upper()
+            tags = {
+                "{{NUM_FATURA}}": fatura_ref, 
+                "{{MES_ANO}}": f"{mes_nome}/{ano}", 
+                "{{SERVICO}}": servico_txt, 
+                "{{TOTAL}}": formatar_moeda_br(total), 
+                "{{EXTENSO}}": extenso
+            }
             doc = gerar_doc_word(doc, df_editor, tags, usuario)
             buf = BytesIO(); doc.save(buf); buf.seek(0)
             
@@ -464,7 +480,9 @@ def sistema_principal():
         st.header("✏ Editar Faturas")
         df_nuvem = carregar_dados_sheets()
         if not df_nuvem.empty:
-            faturas = df_nuvem['fatura_ref'].unique(); sel_fat = st.selectbox("Editar fatura:", faturas)
+            faturas = df_nuvem['fatura_ref'].unique()
+            sel_fat = st.selectbox("Editar fatura:", faturas)
+            
             if sel_fat:
                 df_filtrado = df_nuvem[df_nuvem['fatura_ref'] == sel_fat].copy()
                 meta_orig = {'mes': df_filtrado.iloc[0]['mes_competencia'], 'ano': df_filtrado.iloc[0]['ano_competencia'], 'usuario': df_filtrado.iloc[0]['tipo_usuario'], 'servico': df_filtrado.iloc[0]['servicos_fatura']}
@@ -475,19 +493,34 @@ def sistema_principal():
                 
                 df_edit = df_filtrado[cols_reais].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "prec_cp": "PREC-CP/SIAPE", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
                 
-                df_final_edit = st.data_editor(df_edit, num_rows="dynamic")
+                # Aplica mesma configuração de colunas
+                df_final_edit = st.data_editor(
+                    df_edit, 
+                    num_rows="dynamic",
+                    column_config={
+                        "VALOR (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+                        "DATA ATEND.": st.column_config.TextColumn("Data (dd/mm)")
+                    }
+                )
                 
                 if st.button("🔄 Atualizar Fatura"):
-                    atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig); st.success("Atualizado!"); st.rerun()
+                    # Limpeza final de data
+                    df_final_edit['DATA ATEND.'] = df_final_edit['DATA ATEND.'].apply(limpar_data_sem_ano)
+                    atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig)
+                    st.success("Atualizado!"); time.sleep(1); st.rerun()
 
     # === ABA 3: RELATÓRIOS ===
     with tab3:
         st.header("📊 Dashboard")
         df = carregar_dados_sheets()
         if not df.empty:
-            df['valor'] = pd.to_numeric(df['valor'], errors='coerce'); total_geral = df['valor'].sum()
-            c1, c2 = st.columns(2); c1.metric("Faturamento Total", f"R$ {total_geral:,.2f}"); c1.metric("Guias", len(df))
-            st.bar_chart(df.groupby("mes_competencia")["valor"].sum()); st.dataframe(df)
+            df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+            total_geral = df['valor'].sum()
+            c1, c2 = st.columns(2)
+            c1.metric("Faturamento Total", formatar_moeda_br(total_geral))
+            c1.metric("Guias Processadas", len(df))
+            st.bar_chart(df.groupby("mes_competencia")["valor"].sum())
+            st.dataframe(df)
 
     # === ABA 4: PROTOCOLO ===
     with tab4:
@@ -496,18 +529,20 @@ def sistema_principal():
         if not df.empty:
             sel = st.multiselect("Selecione Faturas:", df['fatura_ref'].unique())
             if sel:
-                sub = df[df['fatura_ref'].isin(sel)]; tot = sub['valor'].sum(); qtd = sub['nr_guia'].nunique()
-                st.info(f"Total: R$ {tot:,.2f} ({qtd} guias)")
+                sub = df[df['fatura_ref'].isin(sel)]
+                tot = sub['valor'].sum()
+                qtd = sub['nr_guia'].nunique()
+                st.info(f"Total: {formatar_moeda_br(tot)} ({qtd} guias)")
                 if st.button("🖨 Baixar Protocolo"):
-                    pdf = gerar_pdf_protocolo(sel, qtd, tot); st.download_button("📥 PDF", pdf, "Protocolo.pdf", "application/pdf")
+                    pdf = gerar_pdf_protocolo(sel, qtd, tot)
+                    st.download_button("📥 PDF", pdf, "Protocolo.pdf", "application/pdf")
 
 # ==========================================
 # 🏁 PONTO DE PARTIDA (MAIN)
 # ==========================================
 
 if __name__ == "__main__":
-    if 'logado' not in st.session_state:
-        st.session_state['logado'] = False
+    if 'logado' not in st.session_state: st.session_state['logado'] = False
 
     if st.session_state['logado']:
         sistema_principal()
