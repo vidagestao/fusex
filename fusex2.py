@@ -380,7 +380,7 @@ def sistema_principal():
             lista_faturas_str = [str(f) for f in faturas_selecionadas]; texto_faturas = ", ".join(lista_faturas_str)
             if len(texto_faturas) > 90: texto_faturas = texto_faturas[:90] + "..."
             c.setFont("Helvetica", 10); c.drawString(2.5*cm, y_box - 1.5*cm, f"Ref. Faturas: {texto_faturas}")
-            valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'); c.drawString(2.5*cm, y_box - 2.2*cm, f"Valor Total Declarado: R$ {valor_fmt}")
+            valor_fmt = f"{total_faturas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'); c.drawString(2.5*cm, y_box - 2.2*cm, f"Gestão Corpore: Walter Vilaça")
             y_ass = y_box - 4.5*cm; c.line(2*cm, y_ass, 9*cm, y_ass); c.setFont("Helvetica", 8); c.drawString(2*cm, y_ass - 0.4*cm, "Despachado por (Corpore)")
             c.line(11*cm, y_ass, 19*cm, y_ass); c.drawString(11*cm, y_ass - 0.4*cm, "Transportado por (Motoboy)")
             y_ass2 = y_ass - 2.5*cm; c.line(2*cm, y_ass2, 19*cm, y_ass2); c.setFont("Helvetica-Bold", 9); c.drawString(2*cm, y_ass2 - 0.5*cm, "Recebido por (Carimbo/Assinatura HGeJF)")
@@ -572,3 +572,4 @@ if __name__ == "__main__":
     if 'logado' not in st.session_state: st.session_state['logado'] = False
     if st.session_state['logado']: sistema_principal()
     else: tela_login()
+
