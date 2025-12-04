@@ -396,6 +396,7 @@ def sistema_principal():
     meses = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6, "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
 
     # === ABA 1: NOVA FATURA ===
+  # === ABA 1: NOVA FATURA ===
     with tab1:
         st.header("📝 Nova Fatura")
         if 'df_input' not in st.session_state: 
@@ -404,7 +405,6 @@ def sistema_principal():
         
         mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1)
         seq = c1.number_input("Sequencial", 1, 100, 1)
-        # Regra do texto para fatura
         fatura_ref = f"{meses[mes_nome]}.{seq}"
         c1.info(f"Fatura: **{fatura_ref}**")
         
@@ -425,7 +425,12 @@ def sistema_principal():
                 st.session_state['df_input'] = pd.concat([st.session_state['df_input'], novo], ignore_index=True)
                 st.success(f"{len(lista)} guias lidas!")
         
-        # --- TABELA DE EDIÇÃO COM FORMATAÇÃO VISUAL ---
+        # --- CORREÇÃO AQUI (FORÇA TEXTO) ---
+        # Garante que DATA ATEND. seja tratada como Texto, não número
+        st.session_state['df_input']['DATA ATEND.'] = st.session_state['df_input']['DATA ATEND.'].astype(str)
+        st.session_state['df_input']['DATA ATEND.'] = st.session_state['df_input']['DATA ATEND.'].replace('nan', '')
+
+        # --- TABELA DE EDIÇÃO ---
         df_editor = st.data_editor(
             st.session_state['df_input'], 
             num_rows="dynamic",
@@ -435,26 +440,27 @@ def sistema_principal():
                     help="Valor do procedimento",
                     min_value=0,
                     step=0.01,
-                    format="R$ %.2f" # Exibe R$ 1.200,00 na tela
+                    format="R$ %.2f"
                 ),
                 "DATA ATEND.": st.column_config.TextColumn(
                     "Data (dd/mm)",
                     help="Use apenas dd/mm ou intervalos",
-                    validate="^[\d/ a-zA-Z]+$"
+                    # Removemos validações rígidas que podem travar a edição
+                    validate=None 
                 )
             }
         )
         
         try: 
             # Garante float para soma
-            df_editor['VALOR (R$)'] = df_editor['VALOR (R$)'].astype(float)
+            df_editor['VALOR (R$)'] = pd.to_numeric(df_editor['VALOR (R$)'], errors='coerce').fillna(0.0)
             total = df_editor['VALOR (R$)'].sum()
         except: total = 0.0
         
         st.metric("Total", formatar_moeda_br(total))
         
         if st.button("💾 Salvar na Nuvem"):
-            # Limpeza final de data caso usuário tenha digitado ano na mão
+            # Limpeza final de data
             df_editor['DATA ATEND.'] = df_editor['DATA ATEND.'].apply(limpar_data_sem_ano)
             
             meta = {'fatura': fatura_ref, 'mes': mes_nome, 'ano': ano, 'usuario': usuario, 'servico': servico_txt}
@@ -474,9 +480,8 @@ def sistema_principal():
             
             st.download_button("📥 Download DOCX", buf, f"Fatura_{fatura_ref}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             st.success("Salvo com sucesso!")
-
-    # === ABA 2: EDITAR ===
    # === ABA 2: EDITAR ===
+    # === ABA 2: EDITAR ===
     with tab2:
         st.header("✏ Editar Faturas")
         df_nuvem = carregar_dados_sheets()
@@ -494,14 +499,12 @@ def sistema_principal():
                 
                 df_edit = df_filtrado[cols_reais].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "prec_cp": "PREC-CP/SIAPE", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
                 
-                # --- CORREÇÃO DO ERRO AQUI ---
-                # Força a coluna de valor ser numérica (float) e preenche vazios com 0.0
+                # --- FORÇA TIPAGEM CORRETA ---
                 df_edit["VALOR (R$)"] = pd.to_numeric(df_edit["VALOR (R$)"], errors='coerce').fillna(0.0)
-                # Garante que a data seja tratada como texto para não dar conflito
-                df_edit["DATA ATEND."] = df_edit["DATA ATEND."].astype(str)
-                # -----------------------------
+                # Força Data como string e remove 'nan' literal se existir
+                df_edit["DATA ATEND."] = df_edit["DATA ATEND."].astype(str).replace('nan', '')
 
-                # Aplica mesma configuração de colunas
+                # Aplica configuração
                 df_final_edit = st.data_editor(
                     df_edit, 
                     num_rows="dynamic",
@@ -512,7 +515,6 @@ def sistema_principal():
                 )
                 
                 if st.button("🔄 Atualizar Fatura"):
-                    # Limpeza final de data
                     df_final_edit['DATA ATEND.'] = df_final_edit['DATA ATEND.'].apply(limpar_data_sem_ano)
                     atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig)
                     st.success("Atualizado!"); time.sleep(1); st.rerun()
@@ -556,4 +558,5 @@ if __name__ == "__main__":
         sistema_principal()
     else:
         tela_login()
+
 
