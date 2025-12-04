@@ -1,12 +1,12 @@
 streamlit
+st-gsheets-connection
 pandas
 python-docx
 num2words
+pytz
 reportlab
 pdfplumber
 pymupdf
 easyocr
-numpy
-Pillow
 bcrypt
-pytz
+numpy
