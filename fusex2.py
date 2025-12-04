@@ -7,7 +7,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from num2words import num2words
 import os
 from datetime import datetime
-import pytz # Fuso horário
+import pytz 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
@@ -34,7 +34,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def carregar_usuarios():
     """Carrega a tabela de usuários. Se não existir, cria estrutura."""
     try:
-        # ttl=0 garante que pegamos os dados mais frescos (sem cache) no login
         df = conn.read(worksheet="usuarios", ttl=0)
         return df
     except:
@@ -44,11 +43,9 @@ def salvar_novo_usuario(username, name, password):
     """Criptografa a senha e salva o novo usuário no Sheets."""
     df_users = carregar_usuarios()
     
-    # Verifica se usuário já existe
     if not df_users.empty and username in df_users['username'].values:
         return False, "Usuário já existe!"
     
-    # Criptografia (Hash)
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     novo_usuario = pd.DataFrame([{
@@ -58,7 +55,6 @@ def salvar_novo_usuario(username, name, password):
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }])
     
-    # Concatena e Salva
     df_final = pd.concat([df_users, novo_usuario], ignore_index=True)
     try:
         conn.update(worksheet="usuarios", data=df_final)
@@ -73,16 +69,13 @@ def autenticar_usuario(username, password):
     if df_users.empty:
         return False, "Nenhum usuário cadastrado."
     
-    # Busca o usuário
     user_row = df_users[df_users['username'] == username]
     
     if user_row.empty:
         return False, "Usuário não encontrado."
     
-    # Pega o hash salvo
     stored_hash = user_row.iloc[0]['password_hash']
     
-    # Verifica a senha
     if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
         return True, user_row.iloc[0]['name']
     else:
@@ -94,7 +87,6 @@ def tela_login():
     
     tab1, tab2 = st.tabs(["🔓 Entrar", "📝 Criar Conta"])
     
-    # --- ABA DE LOGIN ---
     with tab1:
         with st.form("login_form"):
             user = st.text_input("Usuário")
@@ -115,9 +107,8 @@ def tela_login():
                     else:
                         st.error(msg)
     
-    # --- ABA DE CADASTRO ---
     with tab2:
-        st.caption("Primeiro acesso? Crie seu login aqui. A senha será criptografada.")
+        st.caption("Primeiro acesso? Crie seu login aqui.")
         with st.form("register_form"):
             new_user = st.text_input("Escolha um Usuário (Login)")
             new_name = st.text_input("Seu Nome Completo")
@@ -151,7 +142,6 @@ def logout():
 # ==========================================
 
 def sistema_principal():
-    # --- SIDEBAR ---
     with st.sidebar:
         st.write(f"Olá, **{st.session_state['usuario_nome']}**! 👋")
         if st.button("Sair / Logout"):
@@ -163,12 +153,15 @@ def sistema_principal():
     # --- FUNÇÕES DE BANCO DE DADOS (SHEETS) ---
     def carregar_dados_sheets():
         try:
-            return conn.read(worksheet="guias", ttl=5)
+            df = conn.read(worksheet="guias", ttl=5)
+            # CORREÇÃO: Converte para string e remove a aspa simples se existir
+            if not df.empty and 'fatura_ref' in df.columns:
+                df['fatura_ref'] = df['fatura_ref'].astype(str).str.replace("'", "", regex=False)
+            return df
         except:
             return pd.DataFrame(columns=["fatura_ref", "mes_competencia", "ano_competencia", "tipo_usuario", "servicos_fatura", "paciente_nome", "nr_guia", "prec_cp", "data_atend", "cod_proced", "valor", "data_lancamento"])
 
     def salvar_no_sheets(df_novo, meta_dados):
-        # Tenta ler a aba existente, se falhar cria um DataFrame vazio
         try: 
             df_existente = conn.read(worksheet="guias", ttl=5)
         except: 
@@ -177,26 +170,25 @@ def sistema_principal():
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
         
+        # CORREÇÃO: Adiciona ' antes do número para forçar TEXTO no Sheets
+        fatura_ref_str = f"'{meta_dados['fatura']}"
+
         for _, row in df_novo.iterrows():
-            # Tratamento de valor para garantir float
-            try: 
-                val = row['VALOR_CALC']
-            except: 
-                val = 0.0
+            try: val = row['VALOR_CALC']
+            except: val = 0.0
             
-            # Tratamento seguro para o PREC-CP (pega vazio se não existir)
             prec_valor = row.get('PREC-CP/SIAPE', '')
             if pd.isna(prec_valor): prec_valor = ""
 
             lista_novos.append({
-                "fatura_ref": meta_dados['fatura'],          # Garante o número correto da fatura
-                "mes_competencia": meta_dados['mes'],        # Garante o mês selecionado no menu
-                "ano_competencia": meta_dados['ano'],        # Garante o ano selecionado no menu
+                "fatura_ref": fatura_ref_str,  # Usando a versão com aspa
+                "mes_competencia": meta_dados['mes'],
+                "ano_competencia": meta_dados['ano'],
                 "tipo_usuario": meta_dados['usuario'],
                 "servicos_fatura": meta_dados['servico'],
                 "paciente_nome": row['NOME DO PACIENTE'],
                 "nr_guia": row['NR DA GUIA'],
-                "prec_cp": str(prec_valor),                  # Campo novo salvo corretamente
+                "prec_cp": str(prec_valor),
                 "data_atend": row['DATA ATEND.'],
                 "cod_proced": row['CÓDIGO PROCED.'],
                 "valor": val,
@@ -205,39 +197,40 @@ def sistema_principal():
         
         df_append = pd.DataFrame(lista_novos)
         
-        # Concatena com o histórico
         if not df_existente.empty:
             df_final = pd.concat([df_existente, df_append], ignore_index=True)
         else:
             df_final = df_append
         
-        # Salva no Google Sheets
         try: 
             conn.update(worksheet="guias", data=df_final)
         except: 
-            # Se a aba 'guias' não existir, tenta escrever na primeira aba disponível (fallback)
             conn.update(worksheet=0, data=df_final)
 
     def atualizar_fatura_sheets(fatura_ref, df_editado, meta_dados):
         df_completo = carregar_dados_sheets()
-        # Remove a fatura antiga
+        
+        # Como carregar_dados_sheets limpa a aspa, a comparação aqui funciona normal
         df_limpo = df_completo[df_completo['fatura_ref'] != fatura_ref]
         
         data_hoje = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lista_novos = []
+        
+        # CORREÇÃO: Adiciona ' antes do número para forçar TEXTO no Sheets ao salvar
+        fatura_ref_safe = f"'{fatura_ref}"
+
         for _, row in df_editado.iterrows():
             try:
                 raw_val = str(row['VALOR (R$)'])
                 val = float(raw_val.replace('R$', '').replace('.', '').replace(',', '.'))
             except: val = 0.0
             
-            # Tenta pegar PREC-CP da edição ou do histórico, se disponível
             prec_cp_val = row.get('PREC-CP/SIAPE', '')
             if not prec_cp_val and 'prec_cp' in row:
                  prec_cp_val = row['prec_cp']
 
             lista_novos.append({
-                "fatura_ref": fatura_ref, 
+                "fatura_ref": fatura_ref_safe, # Salvando com a aspa
                 "mes_competencia": meta_dados['mes'],
                 "ano_competencia": meta_dados['ano'], 
                 "tipo_usuario": meta_dados['usuario'],
@@ -252,10 +245,18 @@ def sistema_principal():
             })
             
         df_append = pd.DataFrame(lista_novos)
+        
+        # No DataFrame final, precisamos ter cuidado porque df_limpo não tem aspa e df_append tem
+        # O ideal é salvar tudo com aspa se formos reescrever a tabela toda.
+        # Mas para simplificar e garantir: vamos salvar o append formatado.
+        
+        # Precisamos garantir que o histórico (df_limpo) também volte com a aspa para o Sheets
+        df_limpo['fatura_ref'] = df_limpo['fatura_ref'].apply(lambda x: f"'{x}" if not str(x).startswith("'") else x)
+
         df_final = pd.concat([df_limpo, df_append], ignore_index=True)
         conn.update(worksheet="guias", data=df_final)
 
-    # --- OCR E EXTRAÇÃO DE PDF ---
+    # --- OCR E EXTRAÇÃO ---
     @st.cache_resource
     def load_ocr_reader():
         return easyocr.Reader(['pt'], gpu=False, quantize=True)
@@ -266,7 +267,7 @@ def sistema_principal():
             for page in pdf.pages:
                 t = page.extract_text()
                 if t: texto_final += t + "\n"
-                
+        
         if len(texto_final.strip()) < 20:
             try:
                 reader = load_ocr_reader() 
@@ -289,7 +290,6 @@ def sistema_principal():
             arquivo.seek(0)
             text, _ = extrair_texto_hibrido(arquivo)
             
-            # Regex otimizado para GUIA 12 2025
             match_guia = re.search(r'(?:Nr|Numero)[:\.]?\s*(\d+)', text, flags=re.IGNORECASE)
             if match_guia: dados["NR DA GUIA"] = match_guia.group(1)
             
@@ -320,9 +320,8 @@ def sistema_principal():
         except: pass
         return dados
 
-    # --- WORD E PDF (GERAÇÃO DE DOCUMENTOS) ---
+    # --- DOC E PDF ---
     def gerar_doc_word(doc, df_dados, tags, tipo_usuario):
-        # 1. Substituição de Tags
         for p in doc.paragraphs:
             for key, val in tags.items(): 
                 if key in p.text: p.text = p.text.replace(key, str(val))
@@ -331,13 +330,11 @@ def sistema_principal():
                 texto_base = "REFERENTE A USUÁRIO:   "
                 for op in opcoes: 
                     marcador = "( X )" if tipo_usuario == op else "( )"
-                    # Ajustes de compatibilidade de nomes
                     if tipo_usuario == "PASS" and op == "PASS (S.CIVIL)": marcador = "( X )"
                     if tipo_usuario == "S.CIVIL" and op == "PASS (S.CIVIL)": marcador = "( X )"
                     texto_base += f"{op} {marcador}    "
                 p.text = texto_base
         
-        # 2. Tabela
         if doc.tables:
             tabela = doc.tables[0]
             for _, row in df_dados.iterrows():
@@ -352,14 +349,12 @@ def sistema_principal():
             row_total = tabela.add_row().cells
             row_total[4].text = "TOTAL"; row_total[5].text = tags["{{TOTAL}}"]
 
-        # 3. Rodapé com Data e Hora (CORRIGIDO BRASILIA)
         section = doc.sections[0]
         footer = section.footer
         p_footer = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
         
         fuso_br = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso_br).strftime("%d/%m/%Y às %H:%M")
-        
         p_footer.text = f"Gestão Corpore - Documento gerado em: {agora}"
         p_footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         if not p_footer.runs: p_footer.add_run()
@@ -394,7 +389,6 @@ def sistema_principal():
             y_box = y_inicial - 2.8*cm; c.rect(2*cm, y_box - 2.5*cm, 17*cm, 2.5*cm)
             c.setFont("Helvetica-Bold", 11); c.drawString(2.5*cm, y_box - 0.8*cm, f"QTD FATURAS: {len(faturas_selecionadas)}"); c.drawString(10*cm, y_box - 0.8*cm, f"TOTAL DE GUIAS: {qtd_guias}")
             
-            # Garante conversão para string e trunca se necessário
             lista_faturas_str = [str(f) for f in faturas_selecionadas]; texto_faturas = ", ".join(lista_faturas_str)
             if len(texto_faturas) > 90: texto_faturas = texto_faturas[:90] + "..."
             
@@ -421,13 +415,12 @@ def sistema_principal():
         mes_nome = c1.selectbox("Mês", list(meses.keys()), index=datetime.now().month - 1)
         seq = c1.number_input("Sequencial", 1, 100, 1)
         
-        # Criação da Fatura Ref fiel à seleção
+        # Garante que é string aqui
         fatura_ref = f"{meses[mes_nome]}.{seq}"
         c1.info(f"Fatura: **{fatura_ref}**")
         
         ano = c2.number_input("Ano", 2024, 2030, 2025)
         
-        # NOVA LISTA COMPLETA DE ESPECIALIDADES
         lista_servicos = ["Consulta", "Fisioterapia", "Fonoaudiologia", "Psicologia", "Terapia Ocupacional", "Terapias Especiais TEA/TGD"]
         servico = c2.multiselect("Serviço", lista_servicos, default=["Fisioterapia"])
         servico_txt = ", ".join(servico)
@@ -477,7 +470,6 @@ def sistema_principal():
                 meta_orig = {'mes': df_filtrado.iloc[0]['mes_competencia'], 'ano': df_filtrado.iloc[0]['ano_competencia'], 'usuario': df_filtrado.iloc[0]['tipo_usuario'], 'servico': df_filtrado.iloc[0]['servicos_fatura']}
                 st.info(f"Editando: {meta_orig['servico']} | {meta_orig['usuario']}")
                 
-                # Prepara colunas para edição (incluindo PREC-CP se existir)
                 cols_possiveis = ["paciente_nome", "nr_guia", "prec_cp", "data_atend", "cod_proced", "valor"]
                 cols_reais = [c for c in cols_possiveis if c in df_filtrado.columns]
                 
