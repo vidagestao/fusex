@@ -476,6 +476,7 @@ def sistema_principal():
             st.success("Salvo com sucesso!")
 
     # === ABA 2: EDITAR ===
+   # === ABA 2: EDITAR ===
     with tab2:
         st.header("✏ Editar Faturas")
         df_nuvem = carregar_dados_sheets()
@@ -493,6 +494,13 @@ def sistema_principal():
                 
                 df_edit = df_filtrado[cols_reais].rename(columns={"paciente_nome": "NOME DO PACIENTE", "nr_guia": "NR DA GUIA", "prec_cp": "PREC-CP/SIAPE", "data_atend": "DATA ATEND.", "cod_proced": "CÓDIGO PROCED.", "valor": "VALOR (R$)"})
                 
+                # --- CORREÇÃO DO ERRO AQUI ---
+                # Força a coluna de valor ser numérica (float) e preenche vazios com 0.0
+                df_edit["VALOR (R$)"] = pd.to_numeric(df_edit["VALOR (R$)"], errors='coerce').fillna(0.0)
+                # Garante que a data seja tratada como texto para não dar conflito
+                df_edit["DATA ATEND."] = df_edit["DATA ATEND."].astype(str)
+                # -----------------------------
+
                 # Aplica mesma configuração de colunas
                 df_final_edit = st.data_editor(
                     df_edit, 
@@ -508,7 +516,7 @@ def sistema_principal():
                     df_final_edit['DATA ATEND.'] = df_final_edit['DATA ATEND.'].apply(limpar_data_sem_ano)
                     atualizar_fatura_sheets(sel_fat, df_final_edit, meta_orig)
                     st.success("Atualizado!"); time.sleep(1); st.rerun()
-
+                    
     # === ABA 3: RELATÓRIOS ===
     with tab3:
         st.header("📊 Dashboard")
@@ -548,3 +556,4 @@ if __name__ == "__main__":
         sistema_principal()
     else:
         tela_login()
+
